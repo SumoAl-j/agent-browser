@@ -1428,7 +1428,7 @@ Frame encoding is daemon-wide:
 | `AGENT_BROWSER_STREAM_MAX_WIDTH` | the viewport | Caps frame width in pixels |
 | `AGENT_BROWSER_STREAM_MAX_HEIGHT` | the viewport | Caps frame height in pixels |
 
-Width and height cap the encoded frame and leave the page size alone, so a portrait or HiDPI viewport keeps its resolution unless you cap it. Stream frames are always jpeg; `screencast_start` takes an explicit `format` when a caller needs png. On a busy page at 1280x720, quality 80 costs about 54 KB per frame, quality 20 about 25 KB, and quality 20 at 640x360 about 9 KB.
+Width and height cap the encoded frame and leave the page size alone, so a portrait or HiDPI viewport keeps its resolution unless you cap it. The live stream requests jpeg. An explicit `screencast_start` reconfigures the same screencast, so a client can see the format change mid-stream. On a busy page at 1280x720, quality 80 costs about 54 KB per frame, quality 20 about 25 KB, and quality 20 at 640x360 about 9 KB.
 
 ```bash
 # Cheaper frames for a constrained link

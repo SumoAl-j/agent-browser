@@ -23,10 +23,12 @@ use super::cdp::client::CdpClient;
 /// session viewport. Defaulting them to a fixed size would downscale every
 /// viewport larger than it.
 ///
-/// Frame format stays jpeg here on purpose. A `frame` message carries no format
-/// field, so a daemon-wide switch would leave every connected client decoding
-/// blind, and png measures about 3x larger. The `screencast_start` command
-/// still takes an explicit format, where the caller knows what it asked for.
+/// No format knob here on purpose: a `frame` message carries no format field, so
+/// a daemon-wide switch would leave connected clients decoding blind, and png
+/// measures about 3x larger.
+///
+/// Not an invariant, though. `screencast_start` reconfigures the same shared
+/// screencast, so an explicit png request does reach stream clients mid-flight.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScreencastConfig {
     pub quality: i32,
@@ -66,9 +68,12 @@ impl ScreencastConfig {
     /// stream that silently stops is worse than one that ignores a typo.
     fn parse(quality: Option<&str>, max_width: Option<&str>, max_height: Option<&str>) -> Self {
         let d = Self::default();
+        // CDP types these as signed, so a value past i32::MAX makes it reject
+        // the whole command. The caller discards that error, so the stream
+        // would stop with no frames and no signal.
         let dimension = |v: Option<&str>| {
             v.and_then(|s| s.trim().parse::<u32>().ok())
-                .filter(|n| *n > 0)
+                .filter(|n| *n > 0 && *n <= i32::MAX as u32)
         };
         Self {
             // Clamped, since CDP accepts an out-of-range quality and ignores it,
@@ -654,8 +659,9 @@ mod tests {
             ScreencastConfig::parse(Some("high"), None, None).quality,
             d.quality
         );
-        // Zero and negative dimensions are dropped, so the viewport is used.
-        for bad in ["0", "-100", "wide"] {
+        // Dropped, so the viewport is used: zero, negative, non-numeric, and
+        // anything past i32::MAX, which CDP rejects outright.
+        for bad in ["0", "-100", "wide", "4294967295", "2147483648"] {
             assert_eq!(
                 ScreencastConfig::parse(None, Some(bad), Some(bad)).max_width,
                 None
