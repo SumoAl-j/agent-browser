@@ -84,7 +84,7 @@ pub(super) async fn cdp_event_loop(
                         .send_command(
                             "Page.startScreencast",
                             Some(json!({
-                                "format": screencast_config.format,
+                                "format": "jpeg",
                                 "quality": screencast_config.quality,
                                 "maxWidth": screencast_config.max_width.unwrap_or(vw),
                                 "maxHeight": screencast_config.max_height.unwrap_or(vh),

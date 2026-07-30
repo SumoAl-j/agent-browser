@@ -17,14 +17,18 @@ use tokio::sync::{broadcast, watch, Mutex, Notify, RwLock};
 
 use super::cdp::client::CdpClient;
 
-/// Screencast encoding, from `AGENT_BROWSER_STREAM_*`.
+/// Screencast encoding for the live stream, from `AGENT_BROWSER_STREAM_*`.
 ///
 /// Invariant: `max_width` and `max_height` are overrides, so `None` keeps the
 /// session viewport. Defaulting them to a fixed size would downscale every
 /// viewport larger than it.
+///
+/// Frame format stays jpeg here on purpose. A `frame` message carries no format
+/// field, so a daemon-wide switch would leave every connected client decoding
+/// blind, and png measures about 3x larger. The `screencast_start` command
+/// still takes an explicit format, where the caller knows what it asked for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScreencastConfig {
-    pub format: String,
     pub quality: i32,
     pub max_width: Option<u32>,
     pub max_height: Option<u32>,
@@ -33,7 +37,6 @@ pub struct ScreencastConfig {
 impl Default for ScreencastConfig {
     fn default() -> Self {
         Self {
-            format: "jpeg".to_string(),
             quality: 80,
             max_width: None,
             max_height: None,
@@ -44,7 +47,6 @@ impl Default for ScreencastConfig {
 impl ScreencastConfig {
     pub fn from_env() -> Self {
         Self::parse(
-            std::env::var("AGENT_BROWSER_STREAM_FORMAT").ok().as_deref(),
             std::env::var("AGENT_BROWSER_STREAM_QUALITY")
                 .ok()
                 .as_deref(),
@@ -62,22 +64,13 @@ impl ScreencastConfig {
     ///
     /// Invariant: an unset or unusable value leaves the default in place. A
     /// stream that silently stops is worse than one that ignores a typo.
-    fn parse(
-        format: Option<&str>,
-        quality: Option<&str>,
-        max_width: Option<&str>,
-        max_height: Option<&str>,
-    ) -> Self {
+    fn parse(quality: Option<&str>, max_width: Option<&str>, max_height: Option<&str>) -> Self {
         let d = Self::default();
         let dimension = |v: Option<&str>| {
             v.and_then(|s| s.trim().parse::<u32>().ok())
                 .filter(|n| *n > 0)
         };
         Self {
-            format: format
-                .map(|s| s.trim().to_ascii_lowercase())
-                .filter(|s| s == "jpeg" || s == "png")
-                .unwrap_or(d.format),
             // Clamped, since CDP accepts an out-of-range quality and ignores it,
             // which reads as "the setting does nothing".
             quality: quality
@@ -620,7 +613,7 @@ mod tests {
 
     #[test]
     fn test_screencast_config_defaults_when_unset() {
-        let c = ScreencastConfig::parse(None, None, None, None);
+        let c = ScreencastConfig::parse(None, None, None);
         assert_eq!(c, ScreencastConfig::default());
         // Dimensions stay unset so the session viewport wins.
         assert_eq!(c.max_width, None);
@@ -629,14 +622,14 @@ mod tests {
 
     #[test]
     fn test_screencast_config_reads_values() {
-        let c = ScreencastConfig::parse(Some("png"), Some("30"), Some("640"), Some("360"));
-        assert_eq!(c.format, "png");
+        let c = ScreencastConfig::parse(Some("30"), Some("640"), Some("360"));
         assert_eq!(c.quality, 30);
         assert_eq!(c.max_width, Some(640));
         assert_eq!(c.max_height, Some(360));
+        // Whitespace is tolerated.
         assert_eq!(
-            ScreencastConfig::parse(Some(" JPEG "), Some(" 55 "), None, None).format,
-            "jpeg"
+            ScreencastConfig::parse(Some(" 55 "), None, None).quality,
+            55
         );
     }
 
@@ -645,17 +638,11 @@ mod tests {
     #[test]
     fn test_screencast_config_clamps_quality() {
         assert_eq!(
-            ScreencastConfig::parse(None, Some("500"), None, None).quality,
+            ScreencastConfig::parse(Some("500"), None, None).quality,
             100
         );
-        assert_eq!(
-            ScreencastConfig::parse(None, Some("-5"), None, None).quality,
-            0
-        );
-        assert_eq!(
-            ScreencastConfig::parse(None, Some("0"), None, None).quality,
-            0
-        );
+        assert_eq!(ScreencastConfig::parse(Some("-5"), None, None).quality, 0);
+        assert_eq!(ScreencastConfig::parse(Some("0"), None, None).quality, 0);
     }
 
     /// An unusable value leaves the default. A stream that silently stops is
@@ -663,24 +650,18 @@ mod tests {
     #[test]
     fn test_screencast_config_ignores_unusable_values() {
         let d = ScreencastConfig::default();
-        for bad in ["webp", "", "gif"] {
-            assert_eq!(
-                ScreencastConfig::parse(Some(bad), None, None, None).format,
-                d.format
-            );
-        }
         assert_eq!(
-            ScreencastConfig::parse(None, Some("high"), None, None).quality,
+            ScreencastConfig::parse(Some("high"), None, None).quality,
             d.quality
         );
         // Zero and negative dimensions are dropped, so the viewport is used.
         for bad in ["0", "-100", "wide"] {
             assert_eq!(
-                ScreencastConfig::parse(None, None, Some(bad), Some(bad)).max_width,
+                ScreencastConfig::parse(None, Some(bad), Some(bad)).max_width,
                 None
             );
             assert_eq!(
-                ScreencastConfig::parse(None, None, Some(bad), Some(bad)).max_height,
+                ScreencastConfig::parse(None, Some(bad), Some(bad)).max_height,
                 None
             );
         }

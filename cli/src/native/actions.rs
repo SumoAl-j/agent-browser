@@ -7771,10 +7771,7 @@ async fn handle_screencast_start(cmd: &Value, state: &mut DaemonState) -> Result
     };
     let default_w = env_cfg.max_width.unwrap_or(viewport_w);
     let default_h = env_cfg.max_height.unwrap_or(viewport_h);
-    let format = cmd
-        .get("format")
-        .and_then(|v| v.as_str())
-        .unwrap_or(&env_cfg.format);
+    let format = cmd.get("format").and_then(|v| v.as_str()).unwrap_or("jpeg");
     let quality = cmd
         .get("quality")
         .and_then(|v| v.as_i64())
