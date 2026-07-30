@@ -7762,15 +7762,16 @@ async fn handle_screencast_start(cmd: &Value, state: &mut DaemonState) -> Result
     }
 
     // Use stored viewport as default for screencast dimensions
-    // Env defaults, so the explicit command and the live stream encode alike.
+    // Quality only. The frame-size env vars are deliberately not applied here:
+    // this command reports its dimensions as the viewport in the status
+    // broadcast, and clients scale pointer coordinates by that, so a smaller
+    // encode would move every click.
     let env_cfg = stream::ScreencastConfig::from_env();
-    let (viewport_w, viewport_h) = if let Some(ref server) = state.stream_server {
+    let (default_w, default_h) = if let Some(ref server) = state.stream_server {
         server.viewport().await
     } else {
         (1280, 720)
     };
-    let default_w = env_cfg.max_width.unwrap_or(viewport_w);
-    let default_h = env_cfg.max_height.unwrap_or(viewport_h);
     let format = cmd.get("format").and_then(|v| v.as_str()).unwrap_or("jpeg");
     let quality = cmd
         .get("quality")
