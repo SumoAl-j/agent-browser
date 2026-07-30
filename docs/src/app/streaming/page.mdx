@@ -49,6 +49,8 @@ The lower-level `screencast_start` and `screencast_stop` commands still control 
 
 Connect to `ws://localhost:9223` to receive frames and send input.
 
+Browser clients must load from `localhost`, `127.0.0.1`, `::1` or `file://`. Any other origin gets a 403 on the upgrade and needs a proxy.
+
 ### Frame messages
 
 The server sends frame messages with base64-encoded images:
@@ -132,6 +134,8 @@ The server then keeps at most one frame in flight and waits for the client to ac
 Every `frame` message carries a monotonic `seq`. Echo the id of the frame you finished rendering. While an ack is outstanding, newer frames replace each other in the server and never reach the socket, so a client that stalls for ten seconds and resumes receives the current page rather than ten seconds of history. This mirrors how Chrome paces its own screencast upstream with `Page.screencastFrameAck`.
 
 Under ack pacing the frame rate is bounded by one frame per acknowledgement round trip, so a client that queues heavy input on the same socket delays its own acks and throttles its own stream. Measured: input above roughly 120 messages per second on the same connection is enough to do it. Send acks ahead of buffered input, or use push pacing.
+
+Ack pacing bounds one hop. With a proxy in the path, forward the renderer's acks; acks generated on receipt leave frames queued on the far side.
 
 Acks are cumulative: acknowledging a newer id covers every older one, so a client that skips ids still unblocks delivery. A client that opts in and then stops acknowledging simply stops receiving frames, while status, tabs, url, and console keep flowing. Send `{"type":"config","pacing":"push"}` to return to the default.
 

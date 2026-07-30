@@ -29,7 +29,7 @@ Read the port from `stream status --json` rather than assuming one; the OS-assig
 
 ## Connecting
 
-Connect a WebSocket client to `ws://127.0.0.1:<port>`. Frame delivery starts automatically once a client attaches, so there is no subscribe message. Connections from a browser page are subject to an origin allowlist.
+Connect a WebSocket client to `ws://127.0.0.1:<port>`. Frame delivery starts automatically once a client attaches, so there is no subscribe message. Browser clients must load from `localhost`, `127.0.0.1`, `::1` or `file://`. Any other origin gets a 403 on the upgrade and needs a proxy.
 
 ## Messages from the server
 
@@ -83,7 +83,7 @@ Push pacing (the default) stops there, and the transport underneath is still ord
 
 Ack pacing closes that gap. Send `{"type":"config","pacing":"ack"}` and the server keeps at most one frame in flight, waiting for `{"type":"ack","seq":N}` before sending the next. Every frame carries a monotonic `seq`; echo the one you finished rendering. Frames produced while an ack is outstanding replace each other and never reach the socket, so a client that stalls for ten seconds and resumes gets the current page, not ten seconds of history.
 
-The rate under ack pacing is one frame per acknowledgement round trip, so a client that floods input on the same socket delays its own acks and throttles itself; above roughly 120 input messages per second this is measurable. Acks are cumulative, so acknowledging a newer id covers any older one. A client that opts in and then stops acking simply stops receiving frames; status, tabs, url, and console keep flowing.
+The rate under ack pacing is one frame per acknowledgement round trip, so a client that floods input on the same socket delays its own acks and throttles itself; above roughly 120 input messages per second this is measurable. Ack pacing bounds one hop. With a proxy in the path, forward the renderer's acks; acks generated on receipt leave frames queued on the far side. Acks are cumulative, so acknowledging a newer id covers any older one. A client that opts in and then stops acking simply stops receiving frames; status, tabs, url, and console keep flowing.
 
 The two settings compose: `pacing` bounds how much is in flight, `maxFps` bounds the rate. A constrained preview usually wants both.
 
