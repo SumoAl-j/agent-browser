@@ -14,7 +14,7 @@ use tokio_tungstenite::WebSocketStream;
 use crate::native::cdp::client::CdpClient;
 
 use super::http::handle_http_request;
-use super::{is_allowed_origin, timestamp_ms, IdleActivity};
+use super::{is_allowed_origin, timestamp_ms, IdleActivity, StreamFrame};
 
 /// Highest per-client frame rate a client may request via the `config` message.
 const MAX_CONFIGURABLE_FPS: u32 = 120;
@@ -24,14 +24,11 @@ const MAX_CONFIGURABLE_FPS: u32 = 120;
 struct ClientConfig {
     /// Frames per second ceiling. 0 means uncapped.
     max_fps: u32,
-    /// When true, the writer keeps at most one frame in flight and waits for
-    /// the client to acknowledge it before sending the next.
+    /// Keep at most one frame in flight, awaiting the client's ack.
     ///
-    /// Without this, latest-frame-wins only holds up to the socket: frames the
-    /// writer has already handed to the transport are delivered in order, so a
-    /// client that stalls drains them as a stale backlog. Acknowledgement moves
-    /// the skip decision to the one place that knows the client kept up, which
-    /// is the same shape Chrome uses upstream (`Page.screencastFrameAck`).
+    /// Invariant: latest-frame-wins holds only above the socket. Frames already
+    /// handed to the transport are delivered in order, so only an ack proves the
+    /// client kept up. Mirrors CDP's own `Page.screencastFrameAck`.
     ack_pacing: bool,
 }
 
@@ -72,11 +69,9 @@ fn apply_config(current: ClientConfig, parsed: &Value) -> Option<ClientConfig> {
 
 /// Settings declared on the WebSocket URL, applied before the first frame.
 ///
-/// A `config` message cannot cover the connection's opening frames: the server
-/// has already sent the cached frame by the time the message arrives, so a
-/// client that wants ack pacing from the very first frame has no way to say so.
-/// `ws://host/?pacing=ack&maxFps=10` closes that window. An unparsable value is
-/// ignored, leaving the default, and a later `config` message still wins.
+/// Invariant: only the URL can govern the opening frame, since the cached frame
+/// is written before a `config` message can arrive. An unparsable value leaves
+/// the default; a later `config` still wins.
 fn config_from_upgrade(request: &str) -> ClientConfig {
     let mut cfg = ClientConfig::default();
     let Some(query) = request
@@ -118,22 +113,14 @@ fn parse_ack_seq(parsed: &Value) -> Option<u64> {
     parsed.get("seq").and_then(|v| v.as_u64())
 }
 
-/// Frame id carried by a serialized frame message, used to tell whether an
-/// incoming ack covers the frame currently in flight.
-fn frame_seq_of(frame: &str) -> Option<u64> {
-    serde_json::from_str::<Value>(frame)
-        .ok()
-        .and_then(|v| v.get("seq").and_then(|s| s.as_u64()))
-}
-
-/// Earliest instant the next frame may be sent, given the last send and the
-/// current cap. `fps == 0` (uncapped) returns `last_sent` itself, which is
-/// already in the past, so the next frame is eligible immediately.
-fn deadline_from(last_sent: Instant, fps: u32) -> Instant {
-    if fps > 0 {
-        last_sent + Duration::from_micros(1_000_000 / fps as u64)
-    } else {
-        last_sent
+/// Earliest instant the next frame may be sent. `None` (nothing delivered yet)
+/// and `fps == 0` (uncapped) both mean "now": a cap bounds the interval between
+/// deliveries and never delays the first one.
+fn deadline_from(last_sent: Option<Instant>, fps: u32) -> Instant {
+    match last_sent {
+        Some(sent) if fps > 0 => sent + Duration::from_micros(1_000_000 / fps as u64),
+        Some(sent) => sent,
+        None => Instant::now(),
     }
 }
 
@@ -141,7 +128,7 @@ fn deadline_from(last_sent: Instant, fps: u32) -> Instant {
 pub(super) async fn accept_loop(
     listener: TcpListener,
     frame_tx: broadcast::Sender<String>,
-    frame_watch: watch::Receiver<Option<Arc<String>>>,
+    frame_watch: watch::Receiver<Option<Arc<StreamFrame>>>,
     client_count: Arc<Mutex<usize>>,
     client_slot: Arc<RwLock<Option<Arc<CdpClient>>>>,
     client_notify: Arc<Notify>,
@@ -157,6 +144,11 @@ pub(super) async fn accept_loop(
     session_name: String,
 ) {
     let session_name: Arc<str> = Arc::from(session_name);
+    // Invariant: every per-connection task is owned here, never detached, so
+    // awaiting this loop proves none survives. Teardown aborts rather than
+    // drains, because a writer parked in `ws_tx.send()` against a client that
+    // stopped reading would hold a graceful drain open forever.
+    let mut connections = tokio::task::JoinSet::new();
     loop {
         tokio::select! {
             changed = shutdown_rx.changed() => {
@@ -164,6 +156,8 @@ pub(super) async fn accept_loop(
                     break;
                 }
             }
+            // Reap finished connections so the set does not grow without bound.
+            Some(_) = connections.join_next(), if !connections.is_empty() => {}
             accept_result = listener.accept() => {
                 let Ok((stream, addr)) = accept_result else {
                     break;
@@ -184,7 +178,7 @@ pub(super) async fn accept_loop(
                 let shutdown_rx = shutdown_rx.clone();
                 let sn = session_name.clone();
 
-                tokio::spawn(async move {
+                connections.spawn(async move {
                     handle_connection(
                         stream,
                         addr,
@@ -209,6 +203,7 @@ pub(super) async fn accept_loop(
             }
         }
     }
+    connections.shutdown().await;
 }
 
 fn is_websocket_upgrade(request: &str) -> bool {
@@ -228,7 +223,7 @@ async fn handle_connection(
     stream: TcpStream,
     addr: SocketAddr,
     frame_tx: broadcast::Sender<String>,
-    frame_watch: watch::Receiver<Option<Arc<String>>>,
+    frame_watch: watch::Receiver<Option<Arc<StreamFrame>>>,
     client_count: Arc<Mutex<usize>>,
     client_slot: Arc<RwLock<Option<Arc<CdpClient>>>>,
     client_notify: Arc<Notify>,
@@ -278,18 +273,17 @@ async fn handle_connection(
     }
 }
 
-/// Handles one WebSocket client with two independent halves:
-/// a reader task that dispatches input to CDP immediately (never queued behind
-/// frame writes), and a writer loop that forwards broadcast messages and
-/// delivers screencast frames latest-first with an optional per-client
-/// frame-rate cap.
+/// One WebSocket client, split in two halves: a reader task dispatching input
+/// to CDP, and a writer loop delivering frames latest-first under an optional
+/// per-client cap. Invariant: the halves never wait on each other, which is
+/// what keeps input responsive while a frame is mid-write.
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
 async fn handle_ws_client(
     stream: TcpStream,
     _addr: SocketAddr,
     initial_config: ClientConfig,
     mut broadcast_rx: broadcast::Receiver<String>,
-    mut frame_watch: watch::Receiver<Option<Arc<String>>>,
+    mut frame_watch: watch::Receiver<Option<Arc<StreamFrame>>>,
     client_count: Arc<Mutex<usize>>,
     client_slot: Arc<RwLock<Option<Arc<CdpClient>>>>,
     client_notify: Arc<Notify>,
@@ -334,23 +328,21 @@ async fn handle_ws_client(
 
     let (mut ws_tx, ws_rx) = ws_stream.split();
 
-    // Set by the client via {"type":"config", ...}. Watch channels (not
-    // atomics) so a mid-stream change wakes the writer's select! below, letting
-    // it re-derive its throttle deadline immediately instead of riding out a
-    // stale one computed from the old settings.
+    // Watch channels, not atomics, so a mid-stream change wakes the writer's
+    // select! below instead of leaving it asleep on a stale deadline.
     let (config_tx, mut config_rx) = watch::channel::<ClientConfig>(initial_config);
     let (ack_tx, mut ack_rx) = watch::channel::<u64>(0);
-    // Spawned before the status, tabs, and seed-frame writes below: those are
-    // three unbounded sends, and a client whose receive queue is already full
-    // would otherwise hold input hostage for the whole handshake.
-    let mut reader_task = tokio::spawn(reader_loop(
+    // Spawned before the status, tabs and seed writes below: those are
+    // unbounded sends, and a full receive queue would otherwise hold input
+    // behind the whole handshake.
+    let mut reader_task = AbortOnDrop(tokio::spawn(reader_loop(
         ws_rx,
         client_slot.clone(),
         cdp_session_id.clone(),
         config_tx,
         ack_tx,
         idle_activity.clone(),
-    ));
+    )));
 
     {
         let guard = client_slot.read().await;
@@ -382,33 +374,29 @@ async fn handle_ws_client(
         }
     }
 
-    // Seed the client with the most recent frame, marking it seen so the
-    // writer loop below does not immediately re-send the same frame.
-    //
-    // Under ack pacing declared on the URL this frame counts as the one in
-    // flight, so the invariant holds from the very first frame rather than from
-    // whenever a `config` message happens to arrive.
+    // Invariant: only a successful send writes `last_sent`. `None` means
+    // nothing was delivered, so the cap owes this connection no wait.
+    let mut last_sent: Option<Instant> = None;
+    // Id written but not yet acknowledged, ack pacing only. While set the
+    // writer holds, and newer frames replace each other in the watch channel.
     let mut awaiting_ack: Option<u64> = None;
+
+    // Seed with the newest frame, marked seen so the writer does not re-send
+    // it. Charged against the cap, so a URL-declared cap governs the gap after.
     let initial_frame = frame_watch.borrow_and_update().clone();
     if let Some(frame) = initial_frame {
-        if initial_config.ack_pacing {
-            awaiting_ack = frame_seq_of(&frame);
+        if ws_tx.send(Message::Text(frame.json.clone())).await.is_ok() {
+            last_sent = Some(Instant::now());
+            if initial_config.ack_pacing {
+                awaiting_ack = frame.seq;
+            }
         }
-        let _ = ws_tx.send(Message::Text((*frame).clone())).await;
     }
 
     client_notify.notify_one();
 
-    // The throttle deadline is always derived from the last send plus the
-    // current interval, so a config change recomputes it against `last_sent`
-    // rather than against whatever rate was active when the last frame went out.
-    let mut next_allowed = Instant::now();
-    let mut last_sent = Instant::now();
+    let mut next_allowed = deadline_from(last_sent, initial_config.max_fps);
     let mut pending_frame = false;
-    // `awaiting_ack` holds the id of the frame written but not yet
-    // acknowledged, in ack pacing only. While it is set the writer holds off,
-    // and newer frames keep replacing each other in the watch channel instead
-    // of queueing in the socket. It is seeded above by the opening frame.
 
     loop {
         tokio::select! {
@@ -418,7 +406,7 @@ async fn handle_ws_client(
                     break;
                 }
             }
-            _ = &mut reader_task => {
+            _ = &mut reader_task.0 => {
                 break;
             }
             msg = broadcast_rx.recv() => {
@@ -441,17 +429,14 @@ async fn handle_ws_client(
                 pending_frame = true;
             }
             changed = config_rx.changed() => {
-                // The client changed its settings. The sender lives as long as
-                // the reader task, so an error here means the reader ended:
-                // break and let cleanup run (mirrors the reader_task arm).
+                // The sender lives as long as the reader, so an error here
+                // means the reader ended. Break and let cleanup run.
                 if changed.is_err() {
                     break;
                 }
                 let cfg = *config_rx.borrow_and_update();
-                // Re-derive the deadline from the last send. Loosening the cap
-                // (or going uncapped) pulls next_allowed into the past so a
-                // pending frame goes out immediately instead of waiting on the
-                // old, slower deadline.
+                // Loosening the cap pulls the deadline into the past, so a
+                // pending frame goes out at once.
                 next_allowed = deadline_from(last_sent, cfg.max_fps);
                 // Leaving ack pacing releases a frame that is still waiting on
                 // an acknowledgement the client will now never send.
@@ -472,36 +457,32 @@ async fn handle_ws_client(
                 }
             }
             _ = tokio::time::sleep_until(next_allowed), if pending_frame && awaiting_ack.is_none() => {
-                // Reading at send time (not at arrival time) is what makes this
-                // latest-frame-wins: frames that arrived during the throttle
-                // window, or while an earlier frame was awaiting its ack, are
-                // skipped, never queued.
+                // Invariant: read at send time, not arrival time. That is what
+                // makes this latest-frame-wins; anything that arrived while the
+                // writer waited is skipped rather than queued.
                 let frame = frame_watch.borrow_and_update().clone();
                 pending_frame = false;
                 let cfg = *config_rx.borrow();
                 if let Some(frame) = frame {
                     if cfg.ack_pacing {
-                        awaiting_ack = frame_seq_of(&frame);
-                        // Settle against what the client has already
-                        // acknowledged, rather than waiting only for the next
-                        // notification. A client that acknowledged an id ahead
-                        // of anything sent would otherwise never move the
-                        // watermark again, and its stream would stop for good.
+                        awaiting_ack = frame.seq;
+                        // Settle against the banked watermark: a client that
+                        // acked ahead of the stream would never move it again.
                         if awaiting_ack.is_some_and(|seq| *ack_rx.borrow() >= seq) {
                             awaiting_ack = None;
                         }
                     }
-                    if ws_tx.send(Message::Text((*frame).clone())).await.is_err() {
+                    if ws_tx.send(Message::Text(frame.json.clone())).await.is_err() {
                         break;
                     }
+                    last_sent = Some(Instant::now());
                 }
-                last_sent = Instant::now();
                 next_allowed = deadline_from(last_sent, cfg.max_fps);
             }
         }
     }
 
-    reader_task.abort();
+    drop(reader_task);
 
     {
         let mut count = client_count.lock().await;
@@ -511,9 +492,9 @@ async fn handle_ws_client(
     client_notify.notify_one();
 }
 
-/// Reads client messages and dispatches them without ever waiting on frame
-/// delivery. Input events are forwarded to CDP sequentially to preserve
-/// ordering (mouse move/press/release must not be reordered).
+/// Reads client messages and dispatches them without waiting on frame
+/// delivery. Input reaches CDP sequentially: mouse move, press and release
+/// must not be reordered.
 async fn reader_loop(
     mut ws_rx: SplitStream<WebSocketStream<TcpStream>>,
     client_slot: Arc<RwLock<Option<Arc<CdpClient>>>>,
@@ -531,15 +512,13 @@ async fn reader_loop(
                 };
                 let msg_type = parsed.get("type").and_then(|v| v.as_str()).unwrap_or("");
                 if msg_type == "config" {
-                    // Bound to a local first: a `watch` Ref taken directly in
-                    // the `if let` scrutinee stays alive for the whole body,
-                    // and `send_replace` would then deadlock against the read
-                    // guard this same task is still holding.
+                    // Bound to a local first: a `watch` Ref taken in the
+                    // `if let` scrutinee lives for the whole body, and
+                    // `send_replace` would deadlock against it.
                     let current = *config.borrow();
                     if let Some(next) = apply_config(current, &parsed) {
-                        // send_replace (not send) so the writer is woken even
-                        // when the value is unchanged; it must re-derive its
-                        // deadline from the new settings on every config message.
+                        // send_replace, not send, so an unchanged value still
+                        // wakes the writer to re-derive its deadline.
                         let _ = config.send_replace(next);
                     }
                     continue;
@@ -562,8 +541,8 @@ async fn reader_loop(
                 }
                 let guard = client_slot.read().await;
                 if let Some(ref client) = *guard {
-                    // Marked here, not before the guard, so the idle clock keeps
-                    // the pre-merge meaning: input that reaches CDP is activity.
+                    // Marked inside the guard: only input that reaches CDP
+                    // counts as activity.
                     if is_user_input_message_type(msg_type) {
                         idle_activity.mark();
                     }
@@ -575,6 +554,56 @@ async fn reader_loop(
             _ => {}
         }
     }
+}
+
+/// Aborts its task on drop.
+///
+/// Invariant: the reader is spawned inside the connection task, so aborting the
+/// connection does not reach it. Without this guard the reader outlives
+/// teardown and keeps dispatching input.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// `Input.dispatchKeyEvent` params for a client `input_keyboard` message.
+///
+/// Invariant: an omitted optional string is left out, never sent as `null`.
+/// CDP rejects the whole command on a null string and the caller discards the
+/// error, so one null silently drops the keystroke. `""` is not a substitute:
+/// `text: ""` on a printable key inserts no character.
+fn keyboard_params(parsed: &Value) -> Value {
+    let mut params = serde_json::Map::new();
+    params.insert(
+        "type".into(),
+        json!(parsed
+            .get("eventType")
+            .and_then(|v| v.as_str())
+            .unwrap_or("keyDown")),
+    );
+    for field in ["key", "code", "text"] {
+        if let Some(value) = parsed.get(field).and_then(|v| v.as_str()) {
+            params.insert(field.into(), json!(value));
+        }
+    }
+    params.insert(
+        "windowsVirtualKeyCode".into(),
+        json!(parsed
+            .get("windowsVirtualKeyCode")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0)),
+    );
+    params.insert(
+        "modifiers".into(),
+        json!(parsed
+            .get("modifiers")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0)),
+    );
+    Value::Object(params)
 }
 
 async fn dispatch_input(
@@ -606,14 +635,7 @@ async fn dispatch_input(
             let _ = client
                 .send_command(
                     "Input.dispatchKeyEvent",
-                    Some(json!({
-                        "type": parsed.get("eventType").and_then(|v| v.as_str()).unwrap_or("keyDown"),
-                        "key": parsed.get("key"),
-                        "code": parsed.get("code"),
-                        "text": parsed.get("text"),
-                        "windowsVirtualKeyCode": parsed.get("windowsVirtualKeyCode").and_then(|v| v.as_i64()).unwrap_or(0),
-                        "modifiers": parsed.get("modifiers").and_then(|v| v.as_i64()).unwrap_or(0),
-                    })),
+                    Some(keyboard_params(parsed)),
                     session_id,
                 )
                 .await;
@@ -709,8 +731,7 @@ mod tests {
 
     #[test]
     fn test_config_settings_are_independent() {
-        // Changing the cap must not silently drop the client out of ack pacing,
-        // which would let the backlog it prevents come back.
+        // Changing the cap must not drop the client out of ack pacing.
         let acked = apply_config(
             ClientConfig::default(),
             &json!({"type": "config", "pacing": "ack"}),
@@ -720,7 +741,6 @@ mod tests {
         assert_eq!(recapped.max_fps, 15);
         assert!(recapped.ack_pacing);
 
-        // And the reverse: opting into pacing keeps an existing cap.
         let repaced = apply_config(recapped, &json!({"type": "config", "pacing": "push"})).unwrap();
         assert_eq!(repaced.max_fps, 15);
         assert!(!repaced.ack_pacing);
@@ -784,13 +804,51 @@ mod tests {
         assert_eq!(parse_ack_seq(&json!({"type": "ack", "seq": "42"})), None);
     }
 
+    /// Guards the omit-never-null rule: a null string makes CDP reject the
+    /// whole command, which silently drops the keystroke.
     #[test]
-    fn test_frame_seq_of_reads_the_id_the_client_acks() {
-        let frame = json!({"type": "frame", "seq": 7, "data": "abc"}).to_string();
-        assert_eq!(frame_seq_of(&frame), Some(7));
-        // A frame without an id leaves the writer unblocked rather than
-        // stalling forever on an ack that can never match.
-        assert_eq!(frame_seq_of(&json!({"type": "frame"}).to_string()), None);
-        assert_eq!(frame_seq_of("not json"), None);
+    fn test_keyboard_params_omit_absent_strings_instead_of_sending_null() {
+        // The dashboard's keyUp shape carries no text at all.
+        let up = keyboard_params(&json!({
+            "eventType": "keyUp", "key": "a", "code": "KeyA", "windowsVirtualKeyCode": 65
+        }));
+        assert_eq!(up["type"], "keyUp");
+        assert_eq!(up["key"], "a");
+        assert!(
+            up.get("text").is_none(),
+            "absent text must be omitted: {}",
+            up
+        );
+
+        // The documented `char` shape carries only text.
+        let ch = keyboard_params(&json!({ "eventType": "char", "text": "z" }));
+        assert_eq!(ch["text"], "z");
+        assert!(ch.get("key").is_none() && ch.get("code").is_none());
+
+        // A non-string value is dropped rather than forwarded.
+        let bad = keyboard_params(&json!({ "eventType": "keyDown", "key": 5, "code": null }));
+        assert!(bad.get("key").is_none() && bad.get("code").is_none());
+
+        // Numeric fields keep defaults so CDP always receives them.
+        assert_eq!(bad["windowsVirtualKeyCode"], 0);
+        assert_eq!(bad["modifiers"], 0);
+        assert_eq!(keyboard_params(&json!({}))["type"], "keyDown");
+    }
+
+    /// A cap bounds the gap between deliveries and never postpones the first.
+    #[test]
+    fn test_deadline_charges_only_real_deliveries() {
+        let now = Instant::now();
+        assert!(deadline_from(None, 1) <= Instant::now());
+        assert!(deadline_from(None, 0) <= Instant::now());
+        assert_eq!(deadline_from(Some(now), 0), now);
+        assert_eq!(
+            deadline_from(Some(now), 2),
+            now + Duration::from_millis(500)
+        );
+        assert_eq!(
+            deadline_from(Some(now), 10),
+            now + Duration::from_millis(100)
+        );
     }
 }

@@ -10,10 +10,9 @@ use super::timestamp_ms;
 
 /// Capture time of a screencast frame, in epoch milliseconds.
 ///
-/// CDP sends `Network.TimeSinceEpoch`, a float in seconds. Reading it as an
-/// integer therefore always failed and every frame went out stamped 0, which
-/// left clients unable to tell how stale a frame was. Milliseconds match the
-/// other timestamps in this protocol.
+/// CDP sends `Network.TimeSinceEpoch`, a float in seconds; reading it as an
+/// integer yields 0 for every frame. Milliseconds match this protocol's other
+/// timestamps.
 fn frame_timestamp_ms(meta: Option<&Value>) -> u64 {
     meta.and_then(|m| m.get("timestamp"))
         .and_then(|v| v.as_f64())
@@ -29,7 +28,7 @@ fn frame_timestamp_ms(meta: Option<&Value>) -> u64 {
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn cdp_event_loop(
     frame_tx: broadcast::Sender<String>,
-    frame_watch: watch::Sender<Option<Arc<String>>>,
+    frame_watch: watch::Sender<Option<Arc<super::StreamFrame>>>,
     client_slot: Arc<RwLock<Option<Arc<CdpClient>>>>,
     client_notify: Arc<tokio::sync::Notify>,
     screencasting: Arc<Mutex<bool>>,
@@ -166,9 +165,10 @@ pub(super) async fn cdp_event_loop(
 
                                         if let Some(data) = evt.params.get("data").and_then(|v| v.as_str()) {
                                             let meta = evt.params.get("metadata");
+                                            let seq = super::next_frame_seq();
                                             let msg = json!({
                                                 "type": "frame",
-                                                "seq": super::next_frame_seq(),
+                                                "seq": seq,
                                                 "data": data,
                                                 "metadata": {
                                                     "offsetTop": meta.and_then(|m| m.get("offsetTop")).and_then(|v| v.as_f64()).unwrap_or(0.0),
@@ -180,7 +180,12 @@ pub(super) async fn cdp_event_loop(
                                                     "timestamp": frame_timestamp_ms(meta),
                                                 }
                                             });
-                                            frame_watch.send_replace(Some(Arc::new(msg.to_string())));
+                                            frame_watch.send_replace(Some(Arc::new(
+                                                super::StreamFrame {
+                                                    seq: Some(seq),
+                                                    json: msg.to_string(),
+                                                },
+                                            )));
                                         }
                                     } else if evt.method == "Runtime.consoleAPICalled" {
                                         let level = evt.params.get("type")
@@ -340,9 +345,8 @@ pub async fn ack_screencast_frame(
 mod tests {
     use super::*;
 
-    /// Regression guard: CDP sends the capture time as a float in seconds, so
-    /// reading it as an integer silently stamped every frame 0 and no client
-    /// could measure frame age.
+    /// Reading the float as an integer stamps every frame 0, so no client can
+    /// measure frame age.
     #[test]
     fn test_frame_timestamp_converts_cdp_seconds_to_millis() {
         let meta = json!({ "timestamp": 1785038682.238_f64 });
