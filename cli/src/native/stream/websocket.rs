@@ -813,6 +813,89 @@ mod tests {
 
     /// Guards the omit-never-null rule: a null string makes CDP reject the
     /// whole command, which silently drops the keystroke.
+    /// A CDP endpoint that records every command and never replies, so a
+    /// dispatcher that waits for a response hangs on the first event.
+    async fn silent_cdp_server() -> (String, std::sync::Arc<Mutex<Vec<String>>>) {
+        use futures_util::StreamExt;
+        let seen = std::sync::Arc::new(Mutex::new(Vec::<String>::new()));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!(
+            "ws://127.0.0.1:{}/devtools/browser/silent",
+            listener.local_addr().unwrap().port()
+        );
+        let recorded = seen.clone();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let (_tx, mut rx) = ws.split();
+            while let Some(Ok(Message::Text(text))) = rx.next().await {
+                if let Ok(v) = serde_json::from_str::<Value>(&text) {
+                    if let Some(m) = v.get("method").and_then(|m| m.as_str()) {
+                        recorded.lock().await.push(m.to_string());
+                    }
+                }
+            }
+        });
+        (url, seen)
+    }
+
+    /// Guards the no-await dispatch, and unlike the e2e it runs on every PR.
+    ///
+    /// Regression: awaiting Chrome's reply per event serialized the reader, so a
+    /// click waited one round trip per queued move. Against a server that never
+    /// replies, the awaiting version cannot get past the first event at all.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_input_dispatch_does_not_wait_for_a_cdp_reply() {
+        let (url, seen) = silent_cdp_server().await;
+        let client = CdpClient::connect(&url).await.expect("mock cdp connect");
+
+        let events = [
+            (
+                "input_mouse",
+                json!({ "eventType": "mouseMoved", "x": 1, "y": 1 }),
+            ),
+            (
+                "input_mouse",
+                json!({ "eventType": "mousePressed", "x": 1, "y": 1 }),
+            ),
+            (
+                "input_keyboard",
+                json!({ "eventType": "keyDown", "key": "a", "text": "a" }),
+            ),
+        ];
+        let dispatched = tokio::time::timeout(Duration::from_secs(5), async {
+            for (kind, payload) in &events {
+                dispatch_input(kind, payload, &client, None).await;
+            }
+        })
+        .await;
+        assert!(
+            dispatched.is_ok(),
+            "dispatch blocked on a CDP reply that never comes"
+        );
+
+        // The commands still reach CDP, in the order they were dispatched.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if seen.lock().await.len() >= 3 || tokio::time::Instant::now() > deadline {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert_eq!(
+            *seen.lock().await,
+            vec![
+                "Input.dispatchMouseEvent",
+                "Input.dispatchMouseEvent",
+                "Input.dispatchKeyEvent"
+            ],
+            "input should reach CDP in dispatch order"
+        );
+
+        // Nothing was registered as awaiting a reply, so no orphan can accumulate.
+        assert_eq!(client.pending_len().await, 0);
+    }
+
     #[test]
     fn test_keyboard_params_omit_absent_strings_instead_of_sending_null() {
         // The dashboard's keyUp shape carries no text at all.
