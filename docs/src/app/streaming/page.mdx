@@ -133,7 +133,7 @@ The server then keeps at most one frame in flight and waits for the client to ac
 
 Every `frame` message carries a monotonic `seq`. Echo the id of the frame you finished rendering. While an ack is outstanding, newer frames replace each other in the server and never reach the socket, so a client that stalls for ten seconds and resumes receives the current page rather than ten seconds of history. This mirrors how Chrome paces its own screencast upstream with `Page.screencastFrameAck`.
 
-Under ack pacing the frame rate is bounded by one frame per acknowledgement round trip, so a client that queues heavy input on the same socket delays its own acks and throttles its own stream. Measured: input above roughly 120 messages per second on the same connection is enough to do it. Send acks ahead of buffered input, or use push pacing.
+Under ack pacing the frame rate is bounded by one frame per acknowledgement round trip, so it is limited by the link's latency rather than its bandwidth.
 
 Ack pacing bounds one hop. With a proxy in the path, forward the renderer's acks; acks generated on receipt leave frames queued on the far side.
 
