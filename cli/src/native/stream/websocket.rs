@@ -606,6 +606,13 @@ fn keyboard_params(parsed: &Value) -> Value {
     Value::Object(params)
 }
 
+/// Dispatches one client input event to CDP.
+///
+/// Invariant: sends without awaiting Chrome's reply. The reply carries nothing
+/// this path uses, and awaiting it serializes the whole reader behind one round
+/// trip per event, so a mouse sweep delays the click behind it. Ordering still
+/// holds: every send takes the same socket mutex and this task calls them in
+/// order, so press never overtakes move.
 async fn dispatch_input(
     msg_type: &str,
     parsed: &Value,
@@ -615,7 +622,7 @@ async fn dispatch_input(
     match msg_type {
         "input_mouse" => {
             let _ = client
-                .send_command(
+                .send_command_no_wait(
                     "Input.dispatchMouseEvent",
                     Some(json!({
                         "type": parsed.get("eventType").and_then(|v| v.as_str()).unwrap_or("mouseMoved"),
@@ -633,7 +640,7 @@ async fn dispatch_input(
         }
         "input_keyboard" => {
             let _ = client
-                .send_command(
+                .send_command_no_wait(
                     "Input.dispatchKeyEvent",
                     Some(keyboard_params(parsed)),
                     session_id,
@@ -642,7 +649,7 @@ async fn dispatch_input(
         }
         "input_touch" => {
             let _ = client
-                .send_command(
+                .send_command_no_wait(
                     "Input.dispatchTouchEvent",
                     Some(json!({
                         "type": parsed.get("eventType").and_then(|v| v.as_str()).unwrap_or("touchStart"),

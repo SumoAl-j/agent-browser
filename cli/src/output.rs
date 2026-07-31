@@ -3035,7 +3035,8 @@ Notes:
   - Frames are delivered latest-first: the newest frame is picked at send
     time, so frames produced during an in-flight write are skipped, never
     queued. Input events dispatch immediately, independent of frame
-    delivery.
+    delivery, and are sent without waiting for the browser's reply, so a
+    click stays responsive behind a burst of mouse moves.
   - Clients can cap their own frame rate by sending
     {"type":"config","maxFps":N} (1-120, 0 = uncapped, per client).
   - Clients that send {"type":"config","pacing":"ack"} receive one frame at
