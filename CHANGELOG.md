@@ -1,8 +1,27 @@
 # agent-browser
 
-## 0.33.1
+## 0.33.2
 
 <!-- release:start -->
+### New Features
+
+- Added **input priority and latest-frame-wins delivery** to the stream server: each WebSocket connection now splits into a reader task and a writer loop, so clicks and keystrokes dispatch to the browser without queueing behind a frame write, and frames move to a latest-value channel so a client that falls behind skips stale frames instead of draining them. Adds a per-client `{"type":"config","maxFps":N}` cap (1 to 120, `0` uncapped) and opt-in ack pacing via `{"type":"config","pacing":"ack"}` with `{"type":"ack","seq":N}`, which keeps one frame in flight so a stalled client never drains a backlog. Both settings can also be declared on the connection URL (`?pacing=ack&maxFps=10`), the only way to cover the opening frame. Every frame now carries a monotonic `seq` (#1594)
+
+### Bug Fixes
+
+- Fixed **keyboard input over the stream**, which worked in none of the three shapes the docs publish: an absent `key`, `code`, or `text` reached CDP as an explicit null, which rejects the whole command, so every key release and every non-printable key was silently dropped, the dashboard's own payloads included (#1594)
+- Fixed **click latency behind mouse movement**: input dispatch awaited Chrome's reply before reading the next message, so a click sat one round trip behind every queued mouse move. After a 300-event sweep a click landed 2471ms late; it now lands in 6ms (#1627)
+- Fixed **frame timestamps**, which were always 0 because CDP sends the capture time as a float in seconds and the code read it as an integer. `metadata.timestamp` is now epoch milliseconds, so a client can measure how stale the frame it is drawing is (#1594)
+- Fixed **`stream disable`** returning while a slow client's input reader was still running (#1594)
+
+### Contributors
+
+- @Railly
+- @kevingatera
+<!-- release:end -->
+
+## 0.33.1
+
 ### Behavior Changes
 
 - The daemon now ships a **default idle timeout of 1 hour**: after an hour with no commands or dashboard input it saves configured restore state, closes the browser, and exits, so integrations that die without calling `close` no longer leak the daemon and its Chrome tree indefinitely. Sessions without `--restore` or another restore key discard transient browser state and open tabs when they shut down. Set `AGENT_BROWSER_IDLE_TIMEOUT_MS=0` to restore the old always-persist behavior, or any other value to tune it. Dashboard mouse, keyboard, and touch input reset the timer. The default never closes headed browsers, including Safari and iOS WebDriver sessions, or user-attached browsers that may be in direct human use. Provider-owned cloud browsers remain eligible for cleanup, and an explicitly configured timeout applies to all browsers, as before (#1605)
@@ -18,7 +37,6 @@
 - @Railly
 - @joelhooks
 - @jadenfix
-<!-- release:end -->
 
 ## 0.33.0
 

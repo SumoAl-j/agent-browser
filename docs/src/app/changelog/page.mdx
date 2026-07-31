@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.33.2
+
+<p className="text-[#888] text-sm">July 30, 2026</p>
+
+### New Features
+
+- Added **input priority and latest-frame-wins delivery** to the stream server: each WebSocket connection now splits into a reader task and a writer loop, so clicks and keystrokes dispatch to the browser without queueing behind a frame write, and frames move to a latest-value channel so a client that falls behind skips stale frames instead of draining them. Adds a per-client `{"type":"config","maxFps":N}` cap (1 to 120, `0` uncapped) and opt-in ack pacing via `{"type":"config","pacing":"ack"}` with `{"type":"ack","seq":N}`, which keeps one frame in flight so a stalled client never drains a backlog. Both settings can also be declared on the connection URL (`?pacing=ack&maxFps=10`), the only way to cover the opening frame. Every frame now carries a monotonic `seq` (#1594)
+
+### Bug Fixes
+
+- Fixed **keyboard input over the stream**, which worked in none of the three shapes the docs publish: an absent `key`, `code`, or `text` reached CDP as an explicit null, which rejects the whole command, so every key release and every non-printable key was silently dropped, the dashboard's own payloads included (#1594)
+- Fixed **click latency behind mouse movement**: input dispatch awaited Chrome's reply before reading the next message, so a click sat one round trip behind every queued mouse move. After a 300-event sweep a click landed 2471ms late; it now lands in 6ms (#1627)
+- Fixed **frame timestamps**, which were always 0 because CDP sends the capture time as a float in seconds and the code read it as an integer. `metadata.timestamp` is now epoch milliseconds, so a client can measure how stale the frame it is drawing is (#1594)
+- Fixed **`stream disable`** returning while a slow client's input reader was still running (#1594)
+
+---
+
 ## v0.33.1
 
 <p className="text-[#888] text-sm">July 28, 2026</p>
