@@ -29,6 +29,7 @@ fn frame_timestamp_ms(meta: Option<&Value>) -> u64 {
 pub(super) async fn cdp_event_loop(
     frame_tx: broadcast::Sender<String>,
     frame_watch: watch::Sender<Option<Arc<super::StreamFrame>>>,
+    screencast_config: Arc<super::ScreencastConfig>,
     client_slot: Arc<RwLock<Option<Arc<CdpClient>>>>,
     client_notify: Arc<tokio::sync::Notify>,
     screencasting: Arc<Mutex<bool>>,
@@ -84,9 +85,9 @@ pub(super) async fn cdp_event_loop(
                             "Page.startScreencast",
                             Some(json!({
                                 "format": "jpeg",
-                                "quality": 80,
-                                "maxWidth": vw,
-                                "maxHeight": vh,
+                                "quality": screencast_config.quality,
+                                "maxWidth": screencast_config.max_width.unwrap_or(vw),
+                                "maxHeight": screencast_config.max_height.unwrap_or(vh),
                                 "everyNthFrame": 1,
                             })),
                             session_id.as_deref(),

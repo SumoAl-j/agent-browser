@@ -25,6 +25,16 @@ agent-browser stream disable           # Tear it down
 
 `AGENT_BROWSER_STREAM_PORT` pins the port for the whole daemon instead of passing `--port`.
 
+Frame encoding is daemon-wide, read once at startup:
+
+| Variable | Default | Notes |
+|---|---|---|
+| `AGENT_BROWSER_STREAM_QUALITY` | `80` | 0 to 100, clamped |
+| `AGENT_BROWSER_STREAM_MAX_WIDTH` | the viewport | caps the frame, does not resize the page |
+| `AGENT_BROWSER_STREAM_MAX_HEIGHT` | the viewport | same |
+
+The live stream requests jpeg, since a `frame` message carries no format field. An explicit `screencast_start` reconfigures the same underlying screencast, so a client can still see the format change mid-stream; sniff the bytes rather than assuming. Measured on a busy page at 1280x720: quality 80 gives ~54 KB per frame, quality 20 gives ~25 KB, and quality 20 at 640x360 gives ~9 KB. An unusable value leaves the default.
+
 Read the port from `stream status --json` rather than assuming one; the OS-assigned default changes per daemon.
 
 ## Connecting
