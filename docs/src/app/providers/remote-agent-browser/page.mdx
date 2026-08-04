@@ -29,8 +29,8 @@ try {
     args: ["https://example.com"],
   });
 
-  const result = await browser.snapshot();
-  console.log(result.results.at(-1)?.stdout);
+  const snapshot = await browser.exec("snapshot");
+  console.log(snapshot.stdout);
 } finally {
   await browser.close();
 }
