@@ -684,6 +684,8 @@ With `--pin-tab`:
 
 The flag is sticky per session: pass it once and later commands and daemon restarts keep the strict semantics. Pass `--no-pin-tab` to explicitly turn the pin off again.
 
+When re-running a shared-tab script such as the repro from #1530, add `--pin-tab` to the first command for every session. Without it, `open` intentionally preserves the legacy behavior and navigates the shared active tab, so the original script still collides. The same rule applies when sessions attach with `--auto-connect` instead of `--cdp`.
+
 ## Chrome Profile Reuse
 
 The fastest way to use your existing login state: pass a Chrome profile name to `--profile`:
