@@ -1,8 +1,32 @@
 # agent-browser
 
-## 0.33.2
+## 0.34.0
 
 <!-- release:start -->
+### New Features
+
+- Added **persistent session-to-tab binding for shared Chrome sessions**. Named sessions connected through `--cdp` or `--auto-connect` now remember their CDP target across commands and daemon restarts, and CDP target ids can be used directly as tab references. Start each session with `--pin-tab` to make the binding strict, so a tab closed externally returns a stable `tab_gone` error instead of silently adopting a neighboring tab. JSON output includes `data.targetId` and an optional sanitized `data.lastUrl`; batch exposes the same recovery data under `result` (#1589)
+
+### Improvements
+
+- Added a **Remote Agent Browser provider guide** covering Vercel authentication, disposable and stable sessions, custom VCR images, snapshots, and live-view URLs (#1648)
+
+### Bug Fixes
+
+- Fixed **parallel sessions sharing one Chrome hijacking each other's tabs**. Event-discovered targets no longer steal a pinned session's active tab, re-attach restores the persisted target instead of selecting index 0, and preliminary plus existing-daemon `--cdp` and `--auto-connect` paths preserve explicit pin enable and disable. Agent skill guidance now requires a named `--session` before the first command (#1589)
+- Fixed **`agent-browser doctor` hanging on Chrome version detection**. Windows reads the version from the executable resource table without spawning Chrome; other platforms bound the version subprocess with a deadline, kill, and reap so inherited output handles cannot block forever or leave an orphan browser (#1641)
+
+### Contributors
+
+- @Railly
+- @huozhi
+- @soichisumi
+- @dandaka
+- @mvanhorn
+<!-- release:end -->
+
+## 0.33.2
+
 ### New Features
 
 - Added **input priority and per-client delivery settings** to the stream server: each WebSocket connection now splits into a reader task and a writer loop, so clicks and keystrokes dispatch to the browser without queueing behind a frame write. Adds a per-client `{"type":"config","maxFps":N}` cap (1 to 120, `0` uncapped) and opt-in ack pacing via `{"type":"config","pacing":"ack"}` with `{"type":"ack","seq":N}`, which keeps one frame in flight so a stalled client never drains a backlog. Both settings can also be declared on the connection URL (`?pacing=ack&maxFps=10`), the only way to cover the opening frame. Every frame now carries a monotonic `seq` (#1594)
@@ -24,7 +48,6 @@
 - @Railly
 - @kevingatera
 - @WebCloud
-<!-- release:end -->
 
 ## 0.33.1
 
