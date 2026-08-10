@@ -7737,7 +7737,10 @@ async fn e2e_pin_tab_rebinds_after_daemon_restart() {
     let state_a = attach_pinned_session(&guard, "e2e-bind-a", &ws_url, url_a).await;
     let binding_a = load_binding("e2e-bind-a", "session A binding should persist");
     assert!(binding_a.pinned, "binding should record pinned=true");
-    assert_eq!(binding_a.url, url_a);
+    assert_eq!(
+        binding_a.url, "",
+        "opaque URL payloads must not be persisted in diagnostic state"
+    );
 
     // Session B binds its own tab and navigates last, so B's tab is the most
     // recently active one (the tab a naive re-attach would adopt).
@@ -7779,6 +7782,10 @@ async fn e2e_pin_tab_rebinds_after_daemon_restart() {
     assert_eq!(
         binding_a2.target_id, binding_a.target_id,
         "re-attach must keep the original bound target"
+    );
+    assert_eq!(
+        binding_a2.url, "",
+        "re-attach must not reintroduce the opaque URL payload"
     );
 
     // Lifecycle-dependent commands must work on the restored tab: attach

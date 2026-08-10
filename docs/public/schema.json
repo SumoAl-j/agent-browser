@@ -132,6 +132,10 @@
       "type": "boolean",
       "description": "Auto-discover and connect to a running Chrome instance."
     },
+    "pinTab": {
+      "type": "boolean",
+      "description": "Pin the session to its bound tab and fail if that tab is gone."
+    },
     "annotate": {
       "type": "boolean",
       "description": "Annotated screenshot with numbered element labels."

@@ -11,6 +11,7 @@ use super::cdp::discovery::discover_cdp_url;
 use super::cdp::lightpanda::{launch_lightpanda, LightpandaLaunchOptions, LightpandaProcess};
 use super::cdp::types::*;
 use super::element::{resolve_element_object_id, RefMap};
+use super::tab_binding;
 
 // ---------------------------------------------------------------------------
 // Launch validation
@@ -1031,7 +1032,8 @@ impl BrowserManager {
         }
         self.bound_target_id = None;
         if self.pin_tab {
-            self.bound_target_gone = Some((target_id.to_string(), last_url.to_string()));
+            self.bound_target_gone =
+                Some((target_id.to_string(), tab_binding::sanitize_url(last_url)));
         }
         false
     }
@@ -1045,7 +1047,8 @@ impl BrowserManager {
         }
         self.bound_target_id = None;
         if self.pin_tab {
-            self.bound_target_gone = Some((target_id.to_string(), last_url.to_string()));
+            self.bound_target_gone =
+                Some((target_id.to_string(), tab_binding::sanitize_url(last_url)));
         }
     }
 
@@ -3010,6 +3013,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_restore_target_binding_omits_opaque_url_from_tab_gone() {
+        let mut mgr = test_manager(vec![page(1, TARGET_B, "https://other.example")]).await;
+        mgr.set_pin_tab(true);
+
+        assert!(!mgr.restore_target_binding(TARGET_A, "data:text/html,restore-secret"));
+
+        let err = mgr.active_session_id().unwrap_err();
+        assert!(err.contains(TARGET_A));
+        assert!(!err.contains("restore-secret"));
+        assert!(!err.contains("last url"));
+    }
+
+    #[tokio::test]
     async fn test_restore_target_binding_missing_without_pin_keeps_legacy_selection() {
         let mut mgr = test_manager(vec![page(1, TARGET_B, "https://other.example")]).await;
 
@@ -3036,6 +3052,24 @@ mod tests {
         assert!(err.starts_with(TAB_GONE_PREFIX));
         // Recovery data is intact: the other tab is still listed.
         assert_eq!(mgr.tab_list().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_external_removal_omits_opaque_url_from_tab_gone() {
+        let mut mgr = test_manager(vec![
+            page(1, TARGET_A, "data:text/html,live-secret"),
+            page(2, TARGET_B, "https://other.example"),
+        ])
+        .await;
+        mgr.set_pin_tab(true);
+        assert!(mgr.restore_target_binding(TARGET_A, "data:text/html,live-secret"));
+
+        mgr.remove_page_by_target_id(TARGET_A);
+
+        let err = mgr.active_session_id().unwrap_err();
+        assert!(err.contains(TARGET_A));
+        assert!(!err.contains("live-secret"));
+        assert!(!err.contains("last url"));
     }
 
     #[tokio::test]

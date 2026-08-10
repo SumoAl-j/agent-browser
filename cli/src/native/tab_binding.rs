@@ -43,21 +43,25 @@ pub fn binding_path(session: &str) -> PathBuf {
     crate::connection::get_socket_dir().join(format!("{}.target", session))
 }
 
-/// Strip credentials, query parameters, and fragment from a URL before it is
-/// persisted. The binding file outlives the daemon, and the URL is only
-/// diagnostic (used in `tab_gone` error messages), so OAuth codes, signed
-/// query parameters, and tokens must not be written to disk. URLs that do
-/// not parse are dropped entirely.
+/// Reduce a URL to safe diagnostic information before it is persisted or
+/// included in a `tab_gone` error. HTTP and HTTPS retain their origin and
+/// path while credentials, query parameters, and fragments are stripped.
+/// `about:blank` is retained exactly. Other schemes and malformed URLs are
+/// dropped because their opaque payloads may contain secrets.
 pub fn sanitize_url(raw: &str) -> String {
+    if raw == "about:blank" {
+        return raw.to_string();
+    }
+
     match url::Url::parse(raw) {
-        Ok(mut parsed) => {
+        Ok(mut parsed) if matches!(parsed.scheme(), "http" | "https") => {
             let _ = parsed.set_username("");
             let _ = parsed.set_password(None);
             parsed.set_query(None);
             parsed.set_fragment(None);
             parsed.to_string()
         }
-        Err(_) => String::new(),
+        _ => String::new(),
     }
 }
 
@@ -97,7 +101,9 @@ pub fn load(session: &str) -> Result<Option<TabBinding>, String> {
 /// next command instead of silently losing the binding.
 pub fn save(session: &str, binding: &TabBinding) -> Result<(), String> {
     let path = binding_path(session);
-    let raw = serde_json::to_string(binding)
+    let mut safe_binding = binding.clone();
+    safe_binding.url = sanitize_url(&safe_binding.url);
+    let raw = serde_json::to_string(&safe_binding)
         .map_err(|e| format!("cannot serialize tab binding: {}", e))?;
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)
@@ -169,6 +175,27 @@ mod tests {
             assert_eq!(load("agent-1"), Ok(Some(binding)));
             clear("agent-1");
             assert_eq!(load("agent-1"), Ok(None));
+        });
+    }
+
+    #[test]
+    fn test_save_drops_opaque_url_payload() {
+        with_socket_dir(|| {
+            let binding = TabBinding {
+                target_id: "AAAA".to_string(),
+                url: "data:text/html,persisted-secret".to_string(),
+                pinned: true,
+            };
+
+            save("opaque", &binding).unwrap();
+
+            let saved = load("opaque").unwrap().unwrap();
+            assert_eq!(saved.target_id, binding.target_id);
+            assert!(saved.pinned);
+            assert_eq!(saved.url, "");
+            assert!(!fs::read_to_string(binding_path("opaque"))
+                .unwrap()
+                .contains("persisted-secret"));
         });
     }
 
@@ -299,7 +326,18 @@ mod tests {
             sanitize_url("https://example.com/checkout"),
             "https://example.com/checkout"
         );
+        assert_eq!(
+            sanitize_url("https://example.com:8443/checkout?token=x#receipt"),
+            "https://example.com:8443/checkout"
+        );
         assert_eq!(sanitize_url("about:blank"), "about:blank");
+        assert_eq!(sanitize_url("ABOUT:blank"), "");
+        assert_eq!(sanitize_url("about:blank#secret"), "");
+        assert_eq!(sanitize_url("about:config"), "");
+        assert_eq!(sanitize_url("data:text/html,secret"), "");
+        assert_eq!(sanitize_url("blob:https://example.com/secret"), "");
+        assert_eq!(sanitize_url("javascript:secret()"), "");
+        assert_eq!(sanitize_url("file:///tmp/secret"), "");
         assert_eq!(sanitize_url("not a url"), "");
         assert_eq!(sanitize_url(""), "");
     }
