@@ -7952,6 +7952,12 @@ async fn e2e_pin_tab_gone_error_and_recovery() {
         "error should start with the tab_gone prefix, got: {}",
         err
     );
+    assert_eq!(resp["data"]["targetId"], binding_a.target_id);
+    assert!(
+        resp["data"].get("lastUrl").is_none(),
+        "opaque URLs must not be exposed in structured diagnostics: {}",
+        serde_json::to_string_pretty(&resp).unwrap_or_default()
+    );
 
     // Recovery commands still work in the gone state: tab_list is allowed,
     // and tab_new binds a fresh tab.

@@ -117,6 +117,29 @@ impl Sessions {
         })
     }
 
+    fn run_json_failure(&self, session: &str, args: &[&str]) -> Value {
+        let output = self
+            .command(session)
+            .args(args)
+            .arg("--json")
+            .output()
+            .expect("failed to run agent-browser");
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "command unexpectedly succeeded or exited abnormally\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|e| {
+            panic!(
+                "stdout was not JSON: {}\n{}",
+                e,
+                String::from_utf8_lossy(&output.stdout)
+            )
+        })
+    }
+
     fn pid(&self, session: &str) -> String {
         std::fs::read_to_string(self.socket_dir.path().join(format!("{}.pid", session)))
             .unwrap()
@@ -182,4 +205,49 @@ fn cdp_pin_tab_precedes_attach_in_existing_daemon() {
     .unwrap();
     assert_eq!(binding["pinned"], true);
     assert_eq!(binding["targetId"], mine["targetId"]);
+}
+
+#[test]
+#[ignore]
+fn tab_gone_exposes_safe_recovery_data_in_cli_and_batch() {
+    let server = TestServer::start();
+    let sessions = Sessions::new();
+    let host = "pin-tab-cli-host";
+    let victim = "pin-tab-cli-victim";
+    let shared_url = server.url("/shared");
+    let safe_url = server.url("/mine");
+    let navigated_url = format!("{}?token=secret#fragment", safe_url);
+
+    sessions.run_json(host, &["open", &shared_url]);
+    let cdp = sessions.run_json(host, &["get", "cdp-url"]);
+    let ws_url = cdp["data"]["cdpUrl"].as_str().unwrap();
+    sessions.run_json(
+        victim,
+        &["--cdp", ws_url, "--pin-tab", "open", &navigated_url],
+    );
+
+    let binding: Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            sessions
+                .socket_dir
+                .path()
+                .join(format!("{}.target", victim)),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let target_id = binding["targetId"].as_str().unwrap();
+    assert_eq!(binding["url"], safe_url);
+
+    sessions.run_json(host, &["tab", "close", target_id]);
+
+    let single = sessions.run_json_failure(victim, &["get", "url"]);
+    assert_eq!(single["code"], "tab_gone");
+    assert_eq!(single["data"]["targetId"], target_id);
+    assert_eq!(single["data"]["lastUrl"], safe_url);
+
+    let batch = sessions.run_json_failure(victim, &["batch", "get url"]);
+    assert_eq!(batch[0]["code"], "tab_gone");
+    assert_eq!(batch[0]["result"]["targetId"], target_id);
+    assert_eq!(batch[0]["result"]["lastUrl"], safe_url);
 }

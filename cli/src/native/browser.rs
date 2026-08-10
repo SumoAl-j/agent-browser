@@ -1008,6 +1008,15 @@ impl BrowserManager {
         self.bound_target_gone.is_some()
     }
 
+    /// Recovery identifiers for a `tab_gone` response. The URL is already
+    /// reduced by `tab_binding::sanitize_url`; an empty value must be omitted
+    /// from public structured output.
+    pub fn bound_target_gone_details(&self) -> Option<(&str, &str)> {
+        self.bound_target_gone
+            .as_ref()
+            .map(|(target_id, last_url)| (target_id.as_str(), last_url.as_str()))
+    }
+
     /// Bind this session to the currently active tab. Called whenever the
     /// session creates a tab or explicitly switches tabs; clears any
     /// `tab_gone` state.

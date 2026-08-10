@@ -1610,7 +1610,7 @@ fn parity_tools() -> Vec<Value> {
         tool(
             TOOL_CONNECT,
             "Connect CDP",
-            "Connect to a browser over CDP. With pinTab, the session is strictly bound to its own tab: it re-binds by target id after restarts and fails with a tab_gone error instead of adopting another tab. Pass pinTab: false to explicitly disable a sticky pin; omit it to keep the current state.",
+            "Connect to a browser over CDP. With pinTab, the session is strictly bound to its own tab: it re-binds by target id after restarts and fails with a tab_gone error instead of adopting another tab. Structured errors include code=tab_gone, data.targetId, and optional sanitized data.lastUrl. Pass pinTab: false to explicitly disable a sticky pin; omit it to keep the current state.",
             json!({
                 "target": { "type": "string", "description": "CDP port or URL." },
                 "pinTab": { "type": "boolean", "description": "Strict session-to-tab binding (sticky for the session). Explicit false disables a sticky pin; omitted leaves it unchanged." }
@@ -4304,6 +4304,36 @@ mod tests {
     fn required_string_reads_present_field() {
         let value = required_string(&json!({ "selector": "@e1" }), "selector").unwrap();
         assert_eq!(value, "@e1");
+    }
+
+    #[test]
+    fn tool_result_preserves_tab_gone_recovery_data() {
+        let run = CliRun {
+            exit_code: Some(1),
+            stdout: json!({
+                "success": false,
+                "data": {
+                    "targetId": "DEAD_TARGET",
+                    "lastUrl": "https://example.com/path"
+                },
+                "error": "tab_gone: bound tab is gone",
+                "code": "tab_gone"
+            })
+            .to_string(),
+            stderr: String::new(),
+        };
+
+        let result = tool_result_from_run(run);
+        assert_eq!(result["isError"], true);
+        assert_eq!(result["structuredContent"]["exitCode"], 1);
+        assert_eq!(
+            result["structuredContent"]["response"]["data"]["targetId"],
+            "DEAD_TARGET"
+        );
+        assert_eq!(
+            result["structuredContent"]["response"]["data"]["lastUrl"],
+            "https://example.com/path"
+        );
     }
 
     #[test]

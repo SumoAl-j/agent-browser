@@ -2643,6 +2643,7 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
         Ok(data) => success_response(&id, data),
         Err(e) => error_response(&id, &super::browser::to_ai_friendly_error(&e)),
     };
+    attach_tab_gone_data(&mut resp, state);
 
     // A failed binding write is retried on the next command, but a pinned
     // session must know its isolation may not survive a daemon restart.
@@ -2674,6 +2675,7 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
     // below; events are otherwise only drained at the start of a command.
     if let Err(e) = state.drain_cdp_events_background().await {
         resp = error_response(&id, &super::browser::to_ai_friendly_error(&e));
+        attach_tab_gone_data(&mut resp, state);
         inject_lifecycle(
             &mut resp,
             state,
@@ -11437,6 +11439,25 @@ fn error_response(id: &str, error: &str) -> Value {
         resp["code"] = json!("tab_gone");
     }
     resp
+}
+
+fn attach_tab_gone_data(resp: &mut Value, state: &DaemonState) {
+    if resp.get("code").and_then(Value::as_str) != Some("tab_gone") {
+        return;
+    }
+    let Some((target_id, last_url)) = state
+        .browser
+        .as_ref()
+        .and_then(BrowserManager::bound_target_gone_details)
+    else {
+        return;
+    };
+
+    let mut data = json!({ "targetId": target_id });
+    if !last_url.is_empty() {
+        data["lastUrl"] = json!(last_url);
+    }
+    resp["data"] = data;
 }
 
 #[cfg(test)]
