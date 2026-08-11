@@ -1501,6 +1501,18 @@ Connect to `ws://localhost:9223` to receive frames and send input:
 
 `seq` is a monotonic frame id, echoed back in an `ack` message under ack pacing. `metadata.timestamp` is the capture time in epoch milliseconds, so a client can tell how old a frame is by the time it draws it.
 
+**Receive URL updates:**
+
+```json
+{
+  "type": "url",
+  "url": "https://example.com/dashboard#activity",
+  "timestamp": 1785038682238
+}
+```
+
+On Chrome, URL messages follow full-document, History API, and fragment navigation in the active tab's main frame. Navigation inside child frames or background tabs does not emit a URL message or replace the active tab's cached URL.
+
 **Send mouse events:**
 
 ```json

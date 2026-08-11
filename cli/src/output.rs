@@ -3043,6 +3043,9 @@ available localhost port automatically and reports it back.
 Notes:
   - 'stream enable' creates the WebSocket server.
   - WebSocket clients trigger frame streaming automatically.
+  - On Chrome, URL messages follow full-document, History API, and fragment
+    navigation in the active tab's main frame. Child-frame and background-tab
+    navigation does not emit URL messages.
   - Frames are delivered latest-first: the newest frame is picked at send
     time, so frames produced during an in-flight write are skipped, never
     queued. Input events dispatch immediately, independent of frame

@@ -857,22 +857,21 @@ impl DaemonState {
                 .browser
                 .as_ref()
                 .and_then(|m| m.active_session_id().ok().map(|s| s.to_string()));
-            server.set_cdp_session_id(session_id).await;
-
-            // Broadcast connection status change to WebSocket clients
             let connected = self.browser.is_some();
             let sc = server.is_screencasting().await;
             let (vw, vh) = server.viewport().await;
+            if let Some(ref mgr) = self.browser {
+                server
+                    .bind_cdp_session_and_broadcast_tabs(session_id, &mgr.tab_list())
+                    .await;
+            } else {
+                server
+                    .bind_cdp_session_and_broadcast_tabs(session_id, &[])
+                    .await;
+            }
             server
                 .broadcast_status(connected, sc, vw, vh, &self.engine)
                 .await;
-            if let Some(ref mgr) = self.browser {
-                server.broadcast_tabs(&mgr.tab_list()).await;
-            } else {
-                server.broadcast_tabs(&[]).await;
-            }
-            // Notify the background CDP event loop that the client changed
-            server.notify_client_changed();
         }
     }
 
@@ -2710,17 +2709,17 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
         server.broadcast_result(&id, action, success, &data, duration_ms);
 
         if let Some(ref mgr) = state.browser {
-            server.broadcast_tabs(&mgr.tab_list()).await;
-
-            // Keep the stream server's CDP session in sync with the active tab
-            // so screencasting always targets the correct page.
+            let tabs = mgr.tab_list();
             if matches!(
                 action,
                 "tab_new" | "tab_switch" | "tab_close" | "open" | "navigate"
             ) {
                 let session_id = mgr.active_session_id().ok().map(|s| s.to_string());
-                server.set_cdp_session_id(session_id).await;
-                server.notify_client_changed();
+                server
+                    .bind_cdp_session_and_broadcast_tabs(session_id, &tabs)
+                    .await;
+            } else {
+                server.broadcast_tabs(&tabs).await;
             }
         }
     }
