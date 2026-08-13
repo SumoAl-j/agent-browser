@@ -343,7 +343,7 @@ fn validate_ca_cert_launch_mode(
         return Ok(());
     }
     if external_launch {
-        return Err("--ca-cert requires a locally launched Chromium browser on Linux".to_string());
+        return Ok(());
     }
     if engine.is_some_and(|value| !value.eq_ignore_ascii_case("chrome")) {
         return Err("--ca-cert is supported only with the Chrome engine on Linux".to_string());
@@ -2093,7 +2093,7 @@ fn provider_plugin_launch_options_from_command(cmd: &Value) -> Value {
     Value::Object(options)
 }
 
-fn skip_launch_action(action: &str) -> bool {
+pub(crate) fn skip_launch_action(action: &str) -> bool {
     if action == INTERNAL_DAEMON_SHUTDOWN_ACTION {
         return true;
     }
@@ -4311,6 +4311,11 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
     state.ref_map.clear();
 
     let has_cdp = cdp_url.is_some() || cdp_port.is_some();
+    let browser_ca_cert = if external_launch {
+        None
+    } else {
+        launch_options.ca_cert.as_deref()
+    };
     super::browser::validate_launch_options(
         launch_options.extensions.as_deref(),
         has_cdp,
@@ -4318,7 +4323,7 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
         storage_state,
         launch_options.allow_file_access,
         launch_options.executable_path.as_deref(),
-        launch_options.ca_cert.as_deref(),
+        browser_ca_cert,
     )?;
 
     // Store proxy credentials before any local or remote CDP branch enables
@@ -13380,12 +13385,12 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"data":{}}'
     }
 
     #[test]
-    fn test_daemon_rejects_ca_cert_outside_local_chrome() {
+    fn test_daemon_uses_ca_cert_for_cli_tls_in_external_launches() {
         let ca = LaunchOptions {
             ca_cert: Some("/tmp/proxy-ca.pem".to_string()),
             ..Default::default()
         };
-        assert!(validate_ca_cert_launch_mode(&ca, Some("chrome"), true).is_err());
+        assert!(validate_ca_cert_launch_mode(&ca, Some("chrome"), true).is_ok());
         assert!(validate_ca_cert_launch_mode(&ca, Some("lightpanda"), false).is_err());
 
         let ignored = LaunchOptions {

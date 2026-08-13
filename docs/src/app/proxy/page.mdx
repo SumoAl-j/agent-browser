@@ -18,7 +18,8 @@ agent-browser --proxy "http://proxy.example.com:8080" --ca-cert /etc/ssl/certs/p
   <tbody>
     <tr><td><code>--proxy &lt;url&gt;</code></td><td>Proxy server URL, with optional credentials</td></tr>
     <tr><td><code>--proxy-bypass &lt;hosts&gt;</code></td><td>Hosts that should bypass the proxy</td></tr>
-    <tr><td><code>--ca-cert &lt;path&gt;</code></td><td>Trust a CA certificate or PEM bundle in a locally launched Chromium browser on Linux</td></tr>
+    <tr><td><code>--ca-cert &lt;path&gt;</code></td><td>Add a CA certificate or PEM bundle to CLI TLS trust and to locally launched Chromium on Linux</td></tr>
+    <tr><td><code>--use-system-ca</code></td><td>Verify the CLI's own connections against the OS trust store</td></tr>
   </tbody>
 </table>
 
@@ -33,20 +34,56 @@ agent-browser --proxy "http://proxy.example.com:8080" --ca-cert /etc/ssl/certs/p
     <tr><td><code>AGENT_BROWSER_PROXY_BYPASS</code></td><td>agent-browser proxy bypass list</td></tr>
     <tr><td><code>AGENT_BROWSER_PROXY_USERNAME</code></td><td>Proxy username when credentials are provided separately</td></tr>
     <tr><td><code>AGENT_BROWSER_PROXY_PASSWORD</code></td><td>Proxy password when credentials are provided separately</td></tr>
-    <tr><td><code>AGENT_BROWSER_CA_CERT</code></td><td>Path to a CA certificate or PEM bundle for locally launched Chromium on Linux</td></tr>
     <tr><td><code>HTTP_PROXY</code> / <code>HTTPS_PROXY</code></td><td>Standard proxy environment variables, used as fallbacks</td></tr>
     <tr><td><code>ALL_PROXY</code></td><td>SOCKS or all-traffic proxy fallback</td></tr>
     <tr><td><code>NO_PROXY</code></td><td>Standard proxy bypass fallback</td></tr>
+    <tr><td><code>AGENT_BROWSER_CA_CERT</code></td><td>Path to a CA certificate to trust</td></tr>
+    <tr><td><code>AGENT_BROWSER_USE_SYSTEM_CA</code></td><td>Use the OS trust store for the CLI's own connections</td></tr>
+    <tr><td><code>SSL_CERT_FILE</code></td><td>Standard CA bundle path, honored as a fallback for CLI TLS trust</td></tr>
   </tbody>
 </table>
 
 `AGENT_BROWSER_PROXY` takes precedence over standard proxy variables. The CLI also accepts credentials embedded in the proxy URL and separates them before passing launch options to the daemon.
 
-## HTTPS interception certificates
+## HTTPS interception
 
-On Linux, `--ca-cert` imports each certificate into a private NSS database used only by the Chromium process launched for that session. Normal hostname and validity checks remain enabled. Install `certutil` from `libnss3-tools` first.
+A proxy that inspects HTTPS terminates TLS and re-signs with its own CA. Two things must trust that CA, and they fail differently.
 
-The option cannot be combined with `--profile`, `--cdp`, `--auto-connect`, providers, Lightpanda, or `--ignore-https-errors`. It is not supported on macOS or Windows.
+<table>
+  <thead>
+    <tr><th>Symptom</th><th>Who rejects the certificate</th><th>Fix</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>net::ERR_CERT_AUTHORITY_INVALID</code> on a page</td><td>Chromium</td><td><code>--ca-cert</code></td></tr>
+    <tr><td><code>CDP WebSocket connect failed: ... UnknownIssuer</code></td><td>The CLI, before the browser is reached</td><td><code>--ca-cert</code> or <code>--use-system-ca</code></td></tr>
+  </tbody>
+</table>
+
+```bash
+agent-browser --ca-cert /etc/ssl/certs/proxy-ca.crt open https://example.com
+AGENT_BROWSER_USE_SYSTEM_CA=1 agent-browser --cdp wss://remote.example.com/session open https://example.com
+agent-browser --ca-cert /etc/ssl/certs/proxy-ca.crt --cdp wss://remote.example.com/session open https://example.com
+```
+
+For a local Chromium launch on Linux, `--ca-cert` imports each certificate into a private NSS database used only by that browser process and also adds it to CLI TLS trust. Install `certutil` from `libnss3-tools` first. Browser-side trust cannot be combined with `--profile`, Lightpanda, or `--ignore-https-errors`, and it is not available for local launches on macOS or Windows.
+
+With `--cdp`, `--auto-connect`, or a provider, `--ca-cert` configures only the CLI's own TLS connections. It cannot change the trust store of a browser that agent-browser did not launch. `--use-system-ca` always affects only CLI TLS.
+
+Which opt-in you need depends on where the CA already lives, and that differs by platform.
+
+<table>
+  <thead>
+    <tr><th>Platform</th><th>Where a proxy CA usually lives</th><th>Use</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Linux, containers, Vercel Sandbox</td><td>A PEM bundle, with <code>SSL_CERT_FILE</code> already pointing at it</td><td>Nothing; it is picked up. Otherwise <code>--ca-cert</code></td></tr>
+    <tr><td>macOS</td><td>The Keychain, installed by MDM. No <code>SSL_CERT_FILE</code> by default</td><td><code>--use-system-ca</code></td></tr>
+    <tr><td>Windows</td><td>The Windows certificate store</td><td><code>--use-system-ca</code></td></tr>
+    <tr><td>Any, with the certificate as a file</td><td>Wherever you saved it</td><td><code>--ca-cert</code></td></tr>
+  </tbody>
+</table>
+
+`--ca-cert` takes a path, so it cannot reach a CA that lives only in the macOS Keychain or the Windows certificate store. Neither option disables CLI verification; only the trusted root set changes. `agent-browser doctor` reports which roots are active. Without a CA certificate at all, `--ignore-https-errors` accepts every browser certificate error, which is less safe.
 
 ## SOCKS proxy
 

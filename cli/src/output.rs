@@ -3718,7 +3718,10 @@ Options:
                              e.g., --proxy-bypass "localhost,*.internal.com"
   --ignore-https-errors      Ignore HTTPS certificate errors
   --ca-cert <path>           Trust a specific CA certificate for HTTPS interception proxies
-                             (or AGENT_BROWSER_CA_CERT; local Chromium on Linux; requires certutil)
+                             (or AGENT_BROWSER_CA_CERT). Adds CLI TLS trust and, for a
+                             local Chromium launch on Linux, browser trust (requires certutil).
+  --use-system-ca            Verify the CLI's own connections against the OS trust store
+                             instead of the built-in roots (or AGENT_BROWSER_USE_SYSTEM_CA)
   --allow-file-access        Allow file:// URLs to access local files (Chromium only)
   --hide-scrollbars <bool>   Hide native scrollbars in headless Chromium screenshots (default: true)
                              Use --hide-scrollbars false to keep scrollbars visible
@@ -3804,6 +3807,7 @@ Environment:
   AGENT_BROWSER_DEBUG            Debug output
   AGENT_BROWSER_IGNORE_HTTPS_ERRORS Ignore HTTPS certificate errors
   AGENT_BROWSER_CA_CERT          Path to CA certificate to trust (HTTPS interception proxies)
+  AGENT_BROWSER_USE_SYSTEM_CA    Use the OS trust store for the CLI's own TLS connections
   AGENT_BROWSER_PROVIDER         Browser provider (ios, browserbase, kernel, browseruse, browserless, agentcore, or plugin name)
   AGENT_BROWSER_AUTO_CONNECT     Auto-discover and connect to running Chrome
   AGENT_BROWSER_PIN_TAB          Pin the session to its bound tab (strict tab binding)

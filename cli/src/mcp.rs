@@ -1904,7 +1904,14 @@ fn tool(name: &str, title: &str, description: &str, properties: Value, required:
         "caCert".to_string(),
         json!({
             "type": "string",
-            "description": "Path to a CA certificate or PEM bundle trusted by a locally launched Chromium browser on Linux."
+            "description": "Path to a CA certificate or PEM bundle added to CLI TLS trust and, for a local Chromium launch on Linux, browser trust."
+        }),
+    );
+    props.insert(
+        "useSystemCa".to_string(),
+        json!({
+            "type": "boolean",
+            "description": "Verify the CLI's own TLS connections against the operating system trust store."
         }),
     );
     props.insert(
@@ -3592,6 +3599,10 @@ fn append_common_global_args(
         args.push("--ca-cert".to_string());
         args.push(ca_cert);
     }
+    if let Some(use_system_ca) = optional_bool(arguments, "useSystemCa")? {
+        args.push("--use-system-ca".to_string());
+        args.push(use_system_ca.to_string());
+    }
 
     Ok(())
 }
@@ -4248,6 +4259,15 @@ mod tests {
         .unwrap();
 
         assert_eq!(args, vec!["--ca-cert", "/tmp/proxy-ca.pem"]);
+    }
+
+    #[test]
+    fn common_global_args_include_use_system_ca() {
+        let mut args = Vec::new();
+
+        append_common_global_args(&mut args, &json!({ "useSystemCa": true }), None).unwrap();
+
+        assert_eq!(args, vec!["--use-system-ca", "true"]);
     }
 
     #[test]
