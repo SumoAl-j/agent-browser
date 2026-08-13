@@ -127,12 +127,19 @@ test("skips the install probe when autoInstall is false", async () => {
 });
 
 test("applies config-level safety flags to every command", async () => {
-  resetConfig({ allowedDomains: ["example.com", "*.example.com"], maxOutputChars: 5000 });
+  resetConfig({
+    allowedDomains: ["example.com", "*.example.com"],
+    caCert: "/etc/ssl/certs/proxy-ca.pem",
+    maxOutputChars: 5000,
+    proxy: "http://proxy.example.com:8080",
+  });
   const sandbox = fakeSandbox({ id: "flags" });
   await tools.close.execute({}, fakeCtx(sandbox));
   const command = sandbox.commands.at(-1);
   assert.ok(command.includes("--allowed-domains 'example.com,*.example.com'"), command);
+  assert.ok(command.includes("--ca-cert /etc/ssl/certs/proxy-ca.pem"), command);
   assert.ok(command.includes("--max-output 5000"), command);
+  assert.ok(command.includes("--proxy http://proxy.example.com:8080"), command);
   resetConfig();
 });
 

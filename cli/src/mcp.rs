@@ -1901,6 +1901,13 @@ fn tool(name: &str, title: &str, description: &str, properties: Value, required:
         }),
     );
     props.insert(
+        "caCert".to_string(),
+        json!({
+            "type": "string",
+            "description": "Path to a CA certificate or PEM bundle trusted by a locally launched Chromium browser on Linux."
+        }),
+    );
+    props.insert(
         "idleTimeout".to_string(),
         json!({
             "type": "string",
@@ -3581,6 +3588,10 @@ fn append_common_global_args(
             args.push(domains.join(","));
         }
     }
+    if let Some(ca_cert) = optional_string(arguments, "caCert")? {
+        args.push("--ca-cert".to_string());
+        args.push(ca_cert);
+    }
 
     Ok(())
 }
@@ -4221,6 +4232,22 @@ mod tests {
         .unwrap();
 
         assert_eq!(args, vec!["--idle-timeout", "0"]);
+    }
+
+    #[test]
+    fn common_global_args_include_ca_cert() {
+        let mut args = Vec::new();
+
+        append_common_global_args(
+            &mut args,
+            &json!({
+                "caCert": "/tmp/proxy-ca.pem"
+            }),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(args, vec!["--ca-cert", "/tmp/proxy-ca.pem"]);
     }
 
     #[test]

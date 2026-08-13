@@ -9,6 +9,7 @@ export default defineExtension({
     autoInstall: z.boolean().default(true),
     /** Binary name or path inside the sandbox. */
     binary: z.string().default("agent-browser"),
+    caCert: z.string().optional(),
     /** Wrap page output in boundary markers so the model can tell tool output from page content. */
     contentBoundaries: z.boolean().default(false),
     /** Download Chromium during auto-install. */

@@ -291,6 +291,7 @@ fn launch_hash(
     opts.proxy_username.hash(&mut h);
     opts.proxy_password.hash(&mut h);
     opts.user_agent.hash(&mut h);
+    opts.ca_cert.hash(&mut h);
     opts.allow_file_access.hash(&mut h);
     opts.hide_scrollbars.hash(&mut h);
     opts.webgpu.hash(&mut h);
@@ -331,6 +332,34 @@ fn launch_connection_is_external(
     provider_name: Option<&str>,
 ) -> bool {
     launch_connection_identity(cdp_url, cdp_port, auto_connect, provider_name).0 != "local"
+}
+
+fn validate_ca_cert_launch_mode(
+    options: &LaunchOptions,
+    engine: Option<&str>,
+    external_launch: bool,
+) -> Result<(), String> {
+    if options.ca_cert.is_none() {
+        return Ok(());
+    }
+    if external_launch {
+        return Err("--ca-cert requires a locally launched Chromium browser on Linux".to_string());
+    }
+    if engine.is_some_and(|value| !value.eq_ignore_ascii_case("chrome")) {
+        return Err("--ca-cert is supported only with the Chrome engine on Linux".to_string());
+    }
+    if options.ignore_https_errors {
+        return Err("--ca-cert cannot be combined with --ignore-https-errors".to_string());
+    }
+    super::browser::validate_launch_options(
+        options.extensions.as_deref(),
+        false,
+        options.profile.as_deref(),
+        options.storage_state.as_deref(),
+        options.allow_file_access,
+        options.executable_path.as_deref(),
+        options.ca_cert.as_deref(),
+    )
 }
 
 pub struct DaemonState {
@@ -3318,6 +3347,14 @@ async fn auto_launch(
         options.viewport_size = Some(server.viewport().await);
     }
     let engine = env::var("AGENT_BROWSER_ENGINE").ok();
+    let cdp = env::var("AGENT_BROWSER_CDP").ok();
+    let auto_connect = env::var("AGENT_BROWSER_AUTO_CONNECT").is_ok();
+    let provider = env::var("AGENT_BROWSER_PROVIDER").ok();
+    validate_ca_cert_launch_mode(
+        &options,
+        engine.as_deref(),
+        cdp.is_some() || auto_connect || provider.is_some(),
+    )?;
     let enable_features = launch_enable_features_from_env();
     let init_script_paths = launch_init_script_paths_from_env();
     let allowed_domains = current_allowed_domains(state).await;
@@ -3342,7 +3379,7 @@ async fn auto_launch(
     write_engine_file(&state.session_id, &state.engine);
     write_extensions_file(&state.session_id);
 
-    if let Ok(cdp) = env::var("AGENT_BROWSER_CDP") {
+    if let Some(cdp) = cdp {
         ensure_allowed_domains_supported_for_launch(AllowedDomainsLaunchSupport {
             allowed_domains: &allowed_domains,
             cdp_url: Some(cdp.as_str()),
@@ -3380,7 +3417,7 @@ async fn auto_launch(
         return Ok(());
     }
 
-    if env::var("AGENT_BROWSER_AUTO_CONNECT").is_ok() {
+    if auto_connect {
         ensure_allowed_domains_supported_for_launch(AllowedDomainsLaunchSupport {
             allowed_domains: &allowed_domains,
             cdp_url: None,
@@ -3426,7 +3463,7 @@ async fn auto_launch(
     // provider API instead of launching a local Chrome instance.  This mirrors
     // the logic in handle_launch() so that auto_launch (triggered by any
     // command arriving before an explicit "launch") honours the provider env.
-    if let Ok(provider) = env::var("AGENT_BROWSER_PROVIDER") {
+    if let Some(provider) = provider {
         let p = provider.to_lowercase();
         ensure_allowed_domains_supported_for_launch(AllowedDomainsLaunchSupport {
             allowed_domains: &allowed_domains,
@@ -3510,6 +3547,7 @@ async fn auto_launch(
     })?;
 
     apply_launch_mutator_plugins(state, &mut options, plugins).await?;
+    validate_ca_cert_launch_mode(&options, engine.as_deref(), false)?;
     ensure_allowed_domains_supported_for_launch(AllowedDomainsLaunchSupport {
         allowed_domains: &allowed_domains,
         cdp_url: None,
@@ -3716,6 +3754,7 @@ fn launch_options_from_env() -> LaunchOptions {
         ignore_https_errors: env::var("AGENT_BROWSER_IGNORE_HTTPS_ERRORS")
             .map(|v| v == "1" || v == "true")
             .unwrap_or(false),
+        ca_cert: env::var("AGENT_BROWSER_CA_CERT").ok(),
         color_scheme: env::var("AGENT_BROWSER_COLOR_SCHEME").ok(),
         download_path: env::var("AGENT_BROWSER_DOWNLOAD_PATH").ok(),
         hide_scrollbars: hide_scrollbars_from_env(),
@@ -4172,6 +4211,11 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
             .get("ignoreHTTPSErrors")
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
+        ca_cert: cmd
+            .get("caCert")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .or_else(|| env::var("AGENT_BROWSER_CA_CERT").ok()),
         color_scheme: cmd
             .get("colorScheme")
             .and_then(|v| v.as_str())
@@ -4188,12 +4232,17 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
         restrict_webrtc,
     };
 
+    let external_launch =
+        cdp_url.is_some() || cdp_port.is_some() || auto_connect || provider_name.is_some();
+    validate_ca_cert_launch_mode(&launch_options, engine.as_deref(), external_launch)?;
+
     state.plugin_init_scripts.clear();
     let local_launch =
         cdp_url.is_none() && cdp_port.is_none() && !auto_connect && provider_name.is_none();
     if local_launch {
         apply_launch_mutator_plugins(state, &mut launch_options, plugins_from_command_or_env(cmd))
             .await?;
+        validate_ca_cert_launch_mode(&launch_options, engine.as_deref(), false)?;
     }
     ensure_allowed_domains_supported_for_launch(AllowedDomainsLaunchSupport {
         allowed_domains: &allowed_domains,
@@ -4269,6 +4318,7 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
         storage_state,
         launch_options.allow_file_access,
         launch_options.executable_path.as_deref(),
+        launch_options.ca_cert.as_deref(),
     )?;
 
     // Store proxy credentials before any local or remote CDP branch enables
@@ -13305,6 +13355,52 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"data":{}}'
             launch_hash(&base, &[], &[], &[], &[], Some("chrome"), "local", None),
             launch_hash(&webgpu, &[], &[], &[], &[], Some("chrome"), "local", None)
         );
+    }
+
+    #[test]
+    fn test_launch_hash_includes_ca_cert() {
+        let base = LaunchOptions::default();
+        let trusted_ca = LaunchOptions {
+            ca_cert: Some("/tmp/proxy-ca.pem".to_string()),
+            ..Default::default()
+        };
+        assert_ne!(
+            launch_hash(&base, &[], &[], &[], &[], Some("chrome"), "local", None),
+            launch_hash(
+                &trusted_ca,
+                &[],
+                &[],
+                &[],
+                &[],
+                Some("chrome"),
+                "local",
+                None
+            )
+        );
+    }
+
+    #[test]
+    fn test_daemon_rejects_ca_cert_outside_local_chrome() {
+        let ca = LaunchOptions {
+            ca_cert: Some("/tmp/proxy-ca.pem".to_string()),
+            ..Default::default()
+        };
+        assert!(validate_ca_cert_launch_mode(&ca, Some("chrome"), true).is_err());
+        assert!(validate_ca_cert_launch_mode(&ca, Some("lightpanda"), false).is_err());
+
+        let ignored = LaunchOptions {
+            ca_cert: Some("/tmp/proxy-ca.pem".to_string()),
+            ignore_https_errors: true,
+            ..Default::default()
+        };
+        assert!(validate_ca_cert_launch_mode(&ignored, Some("chrome"), false).is_err());
+
+        let profile = LaunchOptions {
+            ca_cert: Some("/tmp/proxy-ca.pem".to_string()),
+            profile: Some("/tmp/profile".to_string()),
+            ..Default::default()
+        };
+        assert!(validate_ca_cert_launch_mode(&profile, Some("chrome"), false).is_err());
     }
 
     #[test]

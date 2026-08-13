@@ -171,7 +171,22 @@ export HTTP_PROXY="http://user:pass@proxy.example.com:8080"
 
 ### SSL/TLS Errors Through Proxy
 
-Some proxies perform SSL inspection. If you encounter certificate errors:
+Some proxies perform SSL inspection with a custom CA certificate. Trust only that CA:
+
+```bash
+# Recommended: trust the proxy's CA certificate
+agent-browser --ca-cert /etc/ssl/certs/proxy-ca.crt open https://example.com
+
+# Via environment variable
+export AGENT_BROWSER_CA_CERT=/etc/ssl/certs/proxy-ca.crt
+agent-browser open https://example.com
+```
+
+On Linux, `--ca-cert` imports the certificate or PEM bundle into an isolated NSS database used only by that locally launched Chromium process. Certificate hostname, validity period, and unrelated authority verification stay enabled. Install `certutil` from `libnss3-tools` first.
+
+The initial implementation does not support `--profile`, `--cdp`, `--auto-connect`, providers, Lightpanda, macOS, or Windows. Use `--ignore-https-errors` only when a broad bypass is the intended contract.
+
+Without the CA certificate on hand, fall back to ignoring every certificate error:
 
 ```bash
 # For testing only - not recommended for production

@@ -144,6 +144,9 @@ function configArgs(): string[] {
   if (config.allowedDomains !== undefined && config.allowedDomains.length > 0) {
     args.push("--allowed-domains", config.allowedDomains.join(","));
   }
+  if (config.caCert !== undefined) {
+    args.push("--ca-cert", config.caCert);
+  }
   if (config.contentBoundaries) {
     args.push("--content-boundaries");
   }

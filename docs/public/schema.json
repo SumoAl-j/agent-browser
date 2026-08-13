@@ -120,6 +120,10 @@
       "type": "boolean",
       "description": "Ignore HTTPS errors during navigation."
     },
+    "caCert": {
+      "type": "string",
+      "description": "Path to a CA certificate or PEM bundle trusted by locally launched Chromium on Linux."
+    },
     "allowFileAccess": {
       "type": "boolean",
       "description": "Allow file:// URLs to access local files."

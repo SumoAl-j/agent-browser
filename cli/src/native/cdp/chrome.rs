@@ -9,6 +9,7 @@ pub struct ChromeProcess {
     child: Child,
     pub ws_url: String,
     temp_user_data_dir: Option<PathBuf>,
+    temp_nss_home: Option<PathBuf>,
     /// On Unix, the process group ID used to kill the entire Chrome process tree.
     #[cfg(unix)]
     pgid: Option<i32>,
@@ -80,6 +81,24 @@ impl Drop for ChromeProcess {
                         let _ = writeln!(
                             std::io::stderr(),
                             "Warning: failed to clean up temp profile {}: {}",
+                            dir.display(),
+                            e
+                        );
+                    }
+                }
+            }
+        }
+        if let Some(ref dir) = self.temp_nss_home {
+            for attempt in 0..3 {
+                match std::fs::remove_dir_all(dir) {
+                    Ok(()) => break,
+                    Err(_) if attempt < 2 => {
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                    Err(e) => {
+                        let _ = writeln!(
+                            std::io::stderr(),
+                            "Warning: failed to clean up temporary CA trust store {}: {}",
                             dir.display(),
                             e
                         );
@@ -300,6 +319,7 @@ pub struct LaunchOptions {
     pub storage_state: Option<String>,
     pub user_agent: Option<String>,
     pub ignore_https_errors: bool,
+    pub ca_cert: Option<String>,
     pub color_scheme: Option<String>,
     pub download_path: Option<String>,
     /// Hide native scrollbars in headless Chromium screenshots by launching
@@ -357,6 +377,7 @@ impl Default for LaunchOptions {
             storage_state: None,
             user_agent: None,
             ignore_https_errors: false,
+            ca_cert: None,
             color_scheme: None,
             download_path: None,
             hide_scrollbars: true,
@@ -538,6 +559,95 @@ fn build_chrome_args(options: &LaunchOptions) -> Result<ChromeArgs, String> {
     })
 }
 
+#[cfg(target_os = "linux")]
+fn prepare_nss_home(ca_cert: &str) -> Result<PathBuf, String> {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    let certs = crate::ca_bundle::load(ca_cert)?;
+    let home = std::env::temp_dir().join(format!("agent-browser-nss-{}", uuid::Uuid::new_v4()));
+    let pki_dir = home.join(".local/share/pki");
+    let db_dir = pki_dir.join("nssdb");
+
+    let result = (|| {
+        std::fs::create_dir_all(&db_dir)
+            .map_err(|e| format!("Failed to create temporary CA trust store: {e}"))?;
+        std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("Failed to secure temporary CA trust store: {e}"))?;
+        symlink(".local/share/pki", home.join(".pki"))
+            .map_err(|e| format!("Failed to configure temporary CA trust store: {e}"))?;
+
+        let db = format!("sql:{}", db_dir.display());
+        run_certutil(
+            &["-N", "--empty-password", "-d", &db],
+            "initialize the NSS database",
+        )?;
+
+        for (index, cert) in certs.iter().enumerate() {
+            let cert_path = home.join(format!("ca-{index}.der"));
+            std::fs::write(&cert_path, cert.as_ref())
+                .map_err(|e| format!("Failed to stage CA certificate for import: {e}"))?;
+            std::fs::set_permissions(&cert_path, std::fs::Permissions::from_mode(0o600))
+                .map_err(|e| format!("Failed to secure staged CA certificate: {e}"))?;
+            let nickname = format!("agent-browser-ca-{index}");
+            let cert_path_arg = cert_path.display().to_string();
+            let import_result = run_certutil(
+                &[
+                    "-A",
+                    "-d",
+                    &db,
+                    "-t",
+                    "C,,",
+                    "-n",
+                    &nickname,
+                    "-i",
+                    &cert_path_arg,
+                ],
+                "import the CA certificate",
+            );
+            let _ = std::fs::remove_file(&cert_path);
+            import_result?;
+        }
+
+        Ok(())
+    })();
+
+    if let Err(error) = result {
+        let _ = std::fs::remove_dir_all(&home);
+        return Err(error);
+    }
+
+    Ok(home)
+}
+
+#[cfg(target_os = "linux")]
+fn run_certutil(args: &[&str], action: &str) -> Result<(), String> {
+    let output = Command::new("certutil").args(args).output().map_err(|e| {
+        format!("Failed to {action}: could not run certutil ({e}). Install libnss3-tools.")
+    })?;
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if detail.is_empty() {
+        Err(format!(
+            "Failed to {action}: certutil exited with {}. Install or repair libnss3-tools.",
+            output.status
+        ))
+    } else {
+        Err(format!("Failed to {action}: {detail}"))
+    }
+}
+
+fn terminate_launched_chrome(child: &mut Child) {
+    let _ = child.kill();
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(-(child.id() as i32), libc::SIGKILL);
+    }
+    let _ = child.wait();
+}
+
 pub fn launch_chrome(options: &LaunchOptions) -> Result<ChromeProcess, String> {
     let chrome_path = match &options.executable_path {
         Some(p) => PathBuf::from(p),
@@ -639,6 +749,23 @@ fn try_launch_chrome(chrome_path: &Path, options: &LaunchOptions) -> Result<Chro
     };
 
     #[cfg(target_os = "linux")]
+    let temp_nss_home = match options.ca_cert.as_deref().map(prepare_nss_home).transpose() {
+        Ok(home) => home,
+        Err(error) => {
+            cleanup_temp_dir(&temp_user_data_dir);
+            return Err(error);
+        }
+    };
+    #[cfg(not(target_os = "linux"))]
+    let temp_nss_home: Option<PathBuf> = None;
+
+    let cleanup_nss_home = |dir: &Option<PathBuf>| {
+        if let Some(ref d) = dir {
+            let _ = std::fs::remove_dir_all(d);
+        }
+    };
+
+    #[cfg(target_os = "linux")]
     let xvfb = maybe_start_xvfb(options);
 
     let mut cmd = Command::new(chrome_path);
@@ -653,6 +780,11 @@ fn try_launch_chrome(chrome_path: &Path, options: &LaunchOptions) -> Result<Chro
     if let Some(ref x) = xvfb {
         cmd.env("DISPLAY", &x.display);
         cmd.env("XAUTHORITY", &x.auth_file);
+    }
+    #[cfg(target_os = "linux")]
+    if let Some(ref home) = temp_nss_home {
+        cmd.env("HOME", home);
+        cmd.env("XDG_DATA_HOME", home.join(".local/share"));
     }
 
     // Place Chrome in its own process group so we can kill the entire tree
@@ -678,6 +810,7 @@ fn try_launch_chrome(chrome_path: &Path, options: &LaunchOptions) -> Result<Chro
 
     let mut child = cmd.spawn().map_err(|e| {
         cleanup_temp_dir(&temp_user_data_dir);
+        cleanup_nss_home(&temp_nss_home);
         format!("Failed to launch Chrome at {:?}: {}", chrome_path, e)
     })?;
 
@@ -692,16 +825,18 @@ fn try_launch_chrome(chrome_path: &Path, options: &LaunchOptions) -> Result<Chro
         Err(primary_err) => {
             // Fallback: scrape stderr (legacy behavior) for better diagnostics.
             let stderr = child.stderr.take().ok_or_else(|| {
-                let _ = child.kill();
+                terminate_launched_chrome(&mut child);
                 cleanup_temp_dir(&temp_user_data_dir);
+                cleanup_nss_home(&temp_nss_home);
                 "Failed to capture Chrome stderr".to_string()
             })?;
             let reader = BufReader::new(stderr);
             match wait_for_ws_url_until(reader, deadline) {
                 Ok(url) => url,
                 Err(fallback_err) => {
-                    let _ = child.kill();
+                    terminate_launched_chrome(&mut child);
                     cleanup_temp_dir(&temp_user_data_dir);
+                    cleanup_nss_home(&temp_nss_home);
                     return Err(format!(
                         "{}\n(also tried parsing stderr) {}",
                         primary_err, fallback_err
@@ -723,6 +858,7 @@ fn try_launch_chrome(chrome_path: &Path, options: &LaunchOptions) -> Result<Chro
         child,
         ws_url,
         temp_user_data_dir,
+        temp_nss_home,
         #[cfg(unix)]
         pgid,
         #[cfg(target_os = "linux")]
@@ -2062,6 +2198,7 @@ mod tests {
                 child,
                 ws_url: String::new(),
                 temp_user_data_dir: Some(dir.clone()),
+                temp_nss_home: None,
                 #[cfg(unix)]
                 pgid: None,
                 #[cfg(target_os = "linux")]
