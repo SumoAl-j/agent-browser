@@ -649,6 +649,23 @@ pub(crate) fn prepare_nss_home(_ca_cert: &CaBundle) -> Result<PreparedNssHome, S
     Err("--ca-cert is currently supported only on Linux".to_string())
 }
 
+fn resolve_prepared_nss_home(options: &LaunchOptions) -> Result<Option<PreparedNssHome>, String> {
+    if let Some(home) = options.prepared_nss_home.clone() {
+        return Ok(Some(home));
+    }
+
+    let ca_bundle = match options.ca_bundle.clone() {
+        Some(bundle) => Some(bundle),
+        None => options
+            .ca_cert
+            .as_deref()
+            .map(crate::ca_bundle::load)
+            .transpose()?,
+    };
+
+    ca_bundle.as_ref().map(prepare_nss_home).transpose()
+}
+
 #[cfg(target_os = "linux")]
 fn run_certutil(args: &[&str], action: &str) -> Result<(), String> {
     let output = Command::new("certutil").args(args).output().map_err(|e| {
@@ -779,26 +796,7 @@ fn try_launch_chrome(chrome_path: &Path, options: &LaunchOptions) -> Result<Chro
     };
 
     #[cfg(target_os = "linux")]
-    let temp_nss_home = match options
-        .prepared_nss_home
-        .clone()
-        .map(Ok)
-        .unwrap_or_else(|| {
-            options
-                .ca_bundle
-                .clone()
-                .map(Ok)
-                .unwrap_or_else(|| {
-                    options
-                        .ca_cert
-                        .as_deref()
-                        .map(crate::ca_bundle::load)
-                        .transpose()
-                })?
-                .as_ref()
-                .map(prepare_nss_home)
-                .transpose()
-        }) {
+    let temp_nss_home = match resolve_prepared_nss_home(options) {
         Ok(home) => home,
         Err(error) => {
             cleanup_temp_dir(&temp_user_data_dir);
@@ -1726,6 +1724,56 @@ fn expand_tilde(path: &str) -> String {
 mod tests {
     use super::*;
     use crate::test_utils::EnvGuard;
+
+    fn prepared_nss_home() -> PreparedNssHome {
+        let path = std::env::temp_dir().join(format!(
+            "agent-browser-prepared-nss-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&path).unwrap();
+        PreparedNssHome {
+            inner: Arc::new(PreparedNssHomeInner { path }),
+        }
+    }
+
+    #[test]
+    fn test_resolve_prepared_nss_home_without_ca_returns_none() {
+        assert!(resolve_prepared_nss_home(&LaunchOptions::default())
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn test_resolve_prepared_nss_home_reuses_prepared_home() {
+        let prepared = prepared_nss_home();
+        let expected_path = prepared.path().to_path_buf();
+        let options = LaunchOptions {
+            prepared_nss_home: Some(prepared),
+            ca_cert: Some("/path/that/must/not/be/read".to_string()),
+            ..Default::default()
+        };
+
+        let resolved = resolve_prepared_nss_home(&options).unwrap().unwrap();
+        assert_eq!(resolved.path(), expected_path);
+    }
+
+    #[test]
+    fn test_resolve_prepared_nss_home_surfaces_ca_load_error() {
+        let missing = std::env::temp_dir()
+            .join(format!("missing-ca-{}", uuid::Uuid::new_v4()))
+            .display()
+            .to_string();
+        let options = LaunchOptions {
+            ca_cert: Some(missing),
+            ..Default::default()
+        };
+
+        let result = resolve_prepared_nss_home(&options);
+        assert!(matches!(
+            result,
+            Err(error) if error.contains("Failed to read CA certificate")
+        ));
+    }
 
     #[cfg(unix)]
     fn spawn_noop_child() -> Child {
