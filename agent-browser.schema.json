@@ -122,7 +122,11 @@
     },
     "caCert": {
       "type": "string",
-      "description": "Path to a CA certificate or PEM bundle trusted by locally launched Chromium on Linux."
+      "description": "Path to a CA certificate or PEM bundle trusted by locally launched Chromium on Linux. Trust remains active for later commands in the same running session."
+    },
+    "clearCaCert": {
+      "type": "boolean",
+      "description": "Explicitly clear CA trust retained by the running browser session."
     },
     "allowFileAccess": {
       "type": "boolean",

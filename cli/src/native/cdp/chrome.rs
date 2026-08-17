@@ -1,15 +1,17 @@
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
 use std::time::Duration;
 
 use super::discovery::discover_cdp_url;
+use crate::ca_bundle::CaBundle;
 
 pub struct ChromeProcess {
     child: Child,
     pub ws_url: String,
     temp_user_data_dir: Option<PathBuf>,
-    temp_nss_home: Option<PathBuf>,
+    temp_nss_home: Option<PreparedNssHome>,
     /// On Unix, the process group ID used to kill the entire Chrome process tree.
     #[cfg(unix)]
     pgid: Option<i32>,
@@ -17,6 +19,40 @@ pub struct ChromeProcess {
     /// hosts. Dropped (and killed) after the Chrome tree is torn down.
     #[cfg(target_os = "linux")]
     xvfb: Option<XvfbServer>,
+}
+
+struct PreparedNssHomeInner {
+    path: PathBuf,
+}
+
+impl Drop for PreparedNssHomeInner {
+    fn drop(&mut self) {
+        for attempt in 0..3 {
+            match std::fs::remove_dir_all(&self.path) {
+                Ok(()) => break,
+                Err(_) if attempt < 2 => std::thread::sleep(Duration::from_millis(100)),
+                Err(e) => {
+                    let _ = writeln!(
+                        std::io::stderr(),
+                        "Warning: failed to clean up temporary CA trust store {}: {}",
+                        self.path.display(),
+                        e
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct PreparedNssHome {
+    inner: Arc<PreparedNssHomeInner>,
+}
+
+impl PreparedNssHome {
+    fn path(&self) -> &Path {
+        &self.inner.path
+    }
 }
 
 impl ChromeProcess {
@@ -81,24 +117,6 @@ impl Drop for ChromeProcess {
                         let _ = writeln!(
                             std::io::stderr(),
                             "Warning: failed to clean up temp profile {}: {}",
-                            dir.display(),
-                            e
-                        );
-                    }
-                }
-            }
-        }
-        if let Some(ref dir) = self.temp_nss_home {
-            for attempt in 0..3 {
-                match std::fs::remove_dir_all(dir) {
-                    Ok(()) => break,
-                    Err(_) if attempt < 2 => {
-                        std::thread::sleep(Duration::from_millis(100));
-                    }
-                    Err(e) => {
-                        let _ = writeln!(
-                            std::io::stderr(),
-                            "Warning: failed to clean up temporary CA trust store {}: {}",
                             dir.display(),
                             e
                         );
@@ -320,6 +338,9 @@ pub struct LaunchOptions {
     pub user_agent: Option<String>,
     pub ignore_https_errors: bool,
     pub ca_cert: Option<String>,
+    pub(crate) ca_bundle: Option<CaBundle>,
+    pub(crate) ca_cert_digest: Option<[u8; 32]>,
+    pub(crate) prepared_nss_home: Option<PreparedNssHome>,
     pub color_scheme: Option<String>,
     pub download_path: Option<String>,
     /// Hide native scrollbars in headless Chromium screenshots by launching
@@ -378,6 +399,9 @@ impl Default for LaunchOptions {
             user_agent: None,
             ignore_https_errors: false,
             ca_cert: None,
+            ca_bundle: None,
+            ca_cert_digest: None,
+            prepared_nss_home: None,
             color_scheme: None,
             download_path: None,
             hide_scrollbars: true,
@@ -560,10 +584,9 @@ fn build_chrome_args(options: &LaunchOptions) -> Result<ChromeArgs, String> {
 }
 
 #[cfg(target_os = "linux")]
-fn prepare_nss_home(ca_cert: &str) -> Result<PathBuf, String> {
+pub(crate) fn prepare_nss_home(ca_cert: &CaBundle) -> Result<PreparedNssHome, String> {
     use std::os::unix::fs::{symlink, PermissionsExt};
 
-    let certs = crate::ca_bundle::load(ca_cert)?;
     let home = std::env::temp_dir().join(format!("agent-browser-nss-{}", uuid::Uuid::new_v4()));
     let pki_dir = home.join(".local/share/pki");
     let db_dir = pki_dir.join("nssdb");
@@ -582,7 +605,7 @@ fn prepare_nss_home(ca_cert: &str) -> Result<PathBuf, String> {
             "initialize the NSS database",
         )?;
 
-        for (index, cert) in certs.iter().enumerate() {
+        for (index, cert) in ca_cert.certificates().iter().enumerate() {
             let cert_path = home.join(format!("ca-{index}.der"));
             std::fs::write(&cert_path, cert.as_ref())
                 .map_err(|e| format!("Failed to stage CA certificate for import: {e}"))?;
@@ -616,7 +639,14 @@ fn prepare_nss_home(ca_cert: &str) -> Result<PathBuf, String> {
         return Err(error);
     }
 
-    Ok(home)
+    Ok(PreparedNssHome {
+        inner: Arc::new(PreparedNssHomeInner { path: home }),
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn prepare_nss_home(_ca_cert: &CaBundle) -> Result<PreparedNssHome, String> {
+    Err("--ca-cert is currently supported only on Linux".to_string())
 }
 
 #[cfg(target_os = "linux")]
@@ -749,7 +779,26 @@ fn try_launch_chrome(chrome_path: &Path, options: &LaunchOptions) -> Result<Chro
     };
 
     #[cfg(target_os = "linux")]
-    let temp_nss_home = match options.ca_cert.as_deref().map(prepare_nss_home).transpose() {
+    let temp_nss_home = match options
+        .prepared_nss_home
+        .clone()
+        .map(Ok)
+        .unwrap_or_else(|| {
+            options
+                .ca_bundle
+                .clone()
+                .map(Ok)
+                .unwrap_or_else(|| {
+                    options
+                        .ca_cert
+                        .as_deref()
+                        .map(crate::ca_bundle::load)
+                        .transpose()
+                })?
+                .as_ref()
+                .map(prepare_nss_home)
+                .transpose()
+        }) {
         Ok(home) => home,
         Err(error) => {
             cleanup_temp_dir(&temp_user_data_dir);
@@ -757,13 +806,7 @@ fn try_launch_chrome(chrome_path: &Path, options: &LaunchOptions) -> Result<Chro
         }
     };
     #[cfg(not(target_os = "linux"))]
-    let temp_nss_home: Option<PathBuf> = None;
-
-    let cleanup_nss_home = |dir: &Option<PathBuf>| {
-        if let Some(ref d) = dir {
-            let _ = std::fs::remove_dir_all(d);
-        }
-    };
+    let temp_nss_home: Option<PreparedNssHome> = None;
 
     #[cfg(target_os = "linux")]
     let xvfb = maybe_start_xvfb(options);
@@ -783,8 +826,8 @@ fn try_launch_chrome(chrome_path: &Path, options: &LaunchOptions) -> Result<Chro
     }
     #[cfg(target_os = "linux")]
     if let Some(ref home) = temp_nss_home {
-        cmd.env("HOME", home);
-        cmd.env("XDG_DATA_HOME", home.join(".local/share"));
+        cmd.env("HOME", home.path());
+        cmd.env("XDG_DATA_HOME", home.path().join(".local/share"));
     }
 
     // Place Chrome in its own process group so we can kill the entire tree
@@ -810,7 +853,6 @@ fn try_launch_chrome(chrome_path: &Path, options: &LaunchOptions) -> Result<Chro
 
     let mut child = cmd.spawn().map_err(|e| {
         cleanup_temp_dir(&temp_user_data_dir);
-        cleanup_nss_home(&temp_nss_home);
         format!("Failed to launch Chrome at {:?}: {}", chrome_path, e)
     })?;
 
@@ -827,7 +869,6 @@ fn try_launch_chrome(chrome_path: &Path, options: &LaunchOptions) -> Result<Chro
             let stderr = child.stderr.take().ok_or_else(|| {
                 terminate_launched_chrome(&mut child);
                 cleanup_temp_dir(&temp_user_data_dir);
-                cleanup_nss_home(&temp_nss_home);
                 "Failed to capture Chrome stderr".to_string()
             })?;
             let reader = BufReader::new(stderr);
@@ -836,7 +877,6 @@ fn try_launch_chrome(chrome_path: &Path, options: &LaunchOptions) -> Result<Chro
                 Err(fallback_err) => {
                     terminate_launched_chrome(&mut child);
                     cleanup_temp_dir(&temp_user_data_dir);
-                    cleanup_nss_home(&temp_nss_home);
                     return Err(format!(
                         "{}\n(also tried parsing stderr) {}",
                         primary_err, fallback_err

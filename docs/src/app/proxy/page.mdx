@@ -19,6 +19,7 @@ agent-browser --proxy "http://proxy.example.com:8080" --ca-cert /etc/ssl/certs/p
     <tr><td><code>--proxy &lt;url&gt;</code></td><td>Proxy server URL, with optional credentials</td></tr>
     <tr><td><code>--proxy-bypass &lt;hosts&gt;</code></td><td>Hosts that should bypass the proxy</td></tr>
     <tr><td><code>--ca-cert &lt;path&gt;</code></td><td>Trust a CA certificate or PEM bundle in a locally launched Chromium browser on Linux</td></tr>
+    <tr><td><code>--no-ca-cert</code></td><td>Clear CA trust retained by the running browser session</td></tr>
   </tbody>
 </table>
 
@@ -44,7 +45,7 @@ agent-browser --proxy "http://proxy.example.com:8080" --ca-cert /etc/ssl/certs/p
 
 ## HTTPS interception certificates
 
-On Linux, `--ca-cert` imports each certificate into a private NSS database used only by the Chromium process launched for that session. Normal hostname and validity checks remain enabled. Install `certutil` from `libnss3-tools` first.
+On Linux, `--ca-cert` imports each certificate into a private NSS database used only by the Chromium process launched for that session. Normal hostname and validity checks remain enabled. Later commands retain that trust when they omit the flag. A different certificate or `--no-ca-cert` relaunches Chromium without restarting the daemon. The same certificate content reuses the current browser even when supplied from a different path. Install `certutil` from `libnss3-tools` first.
 
 The option cannot be combined with `--profile`, `--cdp`, `--auto-connect`, providers, Lightpanda, or `--ignore-https-errors`. It is not supported on macOS or Windows.
 

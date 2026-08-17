@@ -3183,6 +3183,7 @@ mod tests {
             provider: None,
             ignore_https_errors: false,
             ca_cert: None,
+            clear_ca_cert: false,
             allow_file_access: false,
             hide_scrollbars: true,
             webgpu: false,

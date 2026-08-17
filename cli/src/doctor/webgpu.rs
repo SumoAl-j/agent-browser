@@ -205,7 +205,6 @@ pub(super) fn check(checks: &mut Vec<Check>, opts: &DoctorOptions) {
         proxy_username: None,
         proxy_password: None,
         ignore_https_errors: false,
-        ca_cert: None,
         allow_file_access: false,
         hide_scrollbars: true,
         webgpu: true,

@@ -955,7 +955,8 @@ This is useful for multimodal AI models that can reason about visual layout, unl
 | `--proxy <url>` | Proxy server URL with optional auth (or `AGENT_BROWSER_PROXY` env) |
 | `--proxy-bypass <hosts>` | Hosts to bypass proxy (or `AGENT_BROWSER_PROXY_BYPASS` env) |
 | `--ignore-https-errors` | Ignore HTTPS certificate errors (useful for self-signed certs) |
-| `--ca-cert <path>` | Trust a CA certificate or PEM bundle for locally launched Chromium on Linux; requires `certutil` and cannot be combined with `--profile` (or `AGENT_BROWSER_CA_CERT` env) |
+| `--ca-cert <path>` | Trust a CA certificate or PEM bundle for locally launched Chromium on Linux; later commands in the same running session retain it when omitted (or `AGENT_BROWSER_CA_CERT` env) |
+| `--no-ca-cert` | Clear CA trust retained by the running browser session (or `AGENT_BROWSER_CLEAR_CA_CERT`) |
 | `--allow-file-access` | Allow file:// URLs to access local files (Chromium only) |
 | `--hide-scrollbars <bool>` | Hide native scrollbars in headless Chromium screenshots, enabled by default (or `AGENT_BROWSER_HIDE_SCROLLBARS` env) |
 | `-p, --provider <name>` | Browser provider, including configured `browser.provider` plugins (or `AGENT_BROWSER_PROVIDER` env) |
@@ -1070,6 +1071,8 @@ Create an `agent-browser.json` file to set persistent defaults instead of repeat
   ]
 }
 ```
+
+`caCert` remains effective for later commands in the same running session. Use `"clearCaCert": true`, `--no-ca-cert`, or `AGENT_BROWSER_CLEAR_CA_CERT=1` to remove it. Setting, changing, or clearing the CA relaunches Chromium without restarting the daemon. Repeating the same certificate content, including from a different path, reuses the current browser.
 
 Use `--config <path>` or `AGENT_BROWSER_CONFIG` to load a specific config file instead of the defaults:
 

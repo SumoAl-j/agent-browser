@@ -1908,6 +1908,13 @@ fn tool(name: &str, title: &str, description: &str, properties: Value, required:
         }),
     );
     props.insert(
+        "clearCaCert".to_string(),
+        json!({
+            "type": "boolean",
+            "description": "Explicitly clear CA trust retained by the running browser session."
+        }),
+    );
+    props.insert(
         "idleTimeout".to_string(),
         json!({
             "type": "string",
@@ -3588,9 +3595,13 @@ fn append_common_global_args(
             args.push(domains.join(","));
         }
     }
-    if let Some(ca_cert) = optional_string(arguments, "caCert")? {
+    let ca_cert = optional_string(arguments, "caCert")?;
+    let clear_ca_cert = optional_bool(arguments, "clearCaCert")?.unwrap_or(false);
+    if let Some(ca_cert) = ca_cert {
         args.push("--ca-cert".to_string());
         args.push(ca_cert);
+    } else if clear_ca_cert {
+        args.push("--no-ca-cert".to_string());
     }
 
     Ok(())
@@ -4242,6 +4253,31 @@ mod tests {
             &mut args,
             &json!({
                 "caCert": "/tmp/proxy-ca.pem"
+            }),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(args, vec!["--ca-cert", "/tmp/proxy-ca.pem"]);
+    }
+
+    #[test]
+    fn common_global_args_include_clear_ca_cert() {
+        let mut args = Vec::new();
+
+        append_common_global_args(&mut args, &json!({ "clearCaCert": true }), None).unwrap();
+
+        assert_eq!(args, vec!["--no-ca-cert"]);
+    }
+
+    #[test]
+    fn common_global_args_prefer_ca_cert_over_clear() {
+        let mut args = Vec::new();
+        append_common_global_args(
+            &mut args,
+            &json!({
+                "caCert": "/tmp/proxy-ca.pem",
+                "clearCaCert": true
             }),
             None,
         )

@@ -164,6 +164,9 @@ fn incompatible_launch_mode_error(flags: &Flags) -> Option<&'static str> {
     if flags.ca_cert.is_some() && flags.ignore_https_errors {
         return Some("Cannot use --ca-cert with --ignore-https-errors");
     }
+    if flags.ca_cert.is_some() && flags.clear_ca_cert {
+        return Some("Cannot use --ca-cert with --no-ca-cert");
+    }
     if flags.ca_cert.is_some() && flags.cdp.is_some() {
         return Some(
             "Cannot use --ca-cert with --cdp (--ca-cert requires a locally launched Chromium browser on Linux)",
@@ -209,6 +212,7 @@ fn should_send_local_launch_config(flags: &Flags) -> bool {
         || flags.args.is_some()
         || flags.user_agent.is_some()
         || flags.ca_cert.is_some()
+        || flags.clear_ca_cert
         || flags.allow_file_access
         || should_send_hide_scrollbars_launch_option(
             flags.cli_hide_scrollbars,
@@ -1324,7 +1328,6 @@ fn main() {
         proxy_username: proxy_username.as_deref(),
         proxy_password: proxy_password.as_deref(),
         ignore_https_errors: flags.ignore_https_errors,
-        ca_cert: flags.ca_cert.as_deref(),
         allow_file_access: flags.allow_file_access,
         hide_scrollbars: flags.hide_scrollbars,
         webgpu: flags.webgpu,
@@ -1384,6 +1387,9 @@ fn main() {
 
         if let Some(ref ca) = flags.ca_cert {
             launch_cmd["caCert"] = json!(ca);
+        }
+        if flags.clear_ca_cert {
+            launch_cmd["clearCaCert"] = json!(true);
         }
 
         if let Some(ref cs) = flags.color_scheme {
@@ -1486,6 +1492,9 @@ fn main() {
 
         if let Some(ref ca) = flags.ca_cert {
             launch_cmd["caCert"] = json!(ca);
+        }
+        if flags.clear_ca_cert {
+            launch_cmd["clearCaCert"] = json!(true);
         }
 
         if let Some(ref cs) = flags.color_scheme {
@@ -1634,6 +1643,9 @@ fn main() {
 
         if let Some(ref ca) = flags.ca_cert {
             launch_cmd["caCert"] = json!(ca);
+        }
+        if flags.clear_ca_cert {
+            launch_cmd["clearCaCert"] = json!(true);
         }
 
         if flags.allow_file_access {
@@ -2038,6 +2050,7 @@ mod tests {
         flags.user_agent = None;
         flags.ignore_https_errors = false;
         flags.ca_cert = None;
+        flags.clear_ca_cert = false;
         flags.allow_file_access = false;
         flags.hide_scrollbars = true;
         flags.cli_hide_scrollbars = false;
@@ -2130,6 +2143,11 @@ mod tests {
         assert_eq!(root_ca_cert["type"], "string");
         assert_eq!(docs_ca_cert["type"], "string");
         assert_eq!(root_ca_cert, docs_ca_cert);
+        assert_eq!(root_schema["properties"]["clearCaCert"]["type"], "boolean");
+        assert_eq!(
+            root_schema["properties"]["clearCaCert"],
+            docs_schema["properties"]["clearCaCert"]
+        );
     }
 
     #[test]
@@ -2314,6 +2332,8 @@ mod tests {
             flags.ca_cert = Some("/tmp/ca.pem".to_string());
             flags
         };
+        let mut clear = with_ca(launch_mode_flags(false, false, false, false));
+        clear.clear_ca_cert = true;
         let mut ignore_errors = with_ca(launch_mode_flags(false, false, false, false));
         ignore_errors.ignore_https_errors = true;
         let mut profile = with_ca(launch_mode_flags(false, false, false, false));
@@ -2346,6 +2366,7 @@ mod tests {
                 lightpanda,
                 "--ca-cert is supported only with the Chrome engine on Linux",
             ),
+            (clear, "Cannot use --ca-cert with --no-ca-cert"),
         ];
 
         for (flags, expected) in cases {

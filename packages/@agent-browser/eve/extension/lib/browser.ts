@@ -146,6 +146,8 @@ function configArgs(): string[] {
   }
   if (config.caCert !== undefined) {
     args.push("--ca-cert", config.caCert);
+  } else if (config.clearCaCert) {
+    args.push("--no-ca-cert");
   }
   if (config.contentBoundaries) {
     args.push("--content-boundaries");
