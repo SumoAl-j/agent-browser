@@ -152,13 +152,13 @@ test("can explicitly clear retained CA trust", async () => {
   resetConfig();
 });
 
-test("config CA selection wins over a simultaneous clear", async () => {
+test("rejects config CA selection with a simultaneous clear", async () => {
   resetConfig({ caCert: "/etc/ssl/certs/proxy-ca.pem", clearCaCert: true });
   const sandbox = fakeSandbox({ id: "select-ca" });
-  await tools.close.execute({}, fakeCtx(sandbox));
-  const command = sandbox.commands.at(-1);
-  assert.ok(command.includes("--ca-cert /etc/ssl/certs/proxy-ca.pem"), command);
-  assert.ok(!command.includes("--no-ca-cert"), command);
+  await assert.rejects(
+    tools.close.execute({}, fakeCtx(sandbox)),
+    /Cannot use caCert with clearCaCert/,
+  );
   resetConfig();
 });
 

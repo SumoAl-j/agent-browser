@@ -3597,6 +3597,11 @@ fn append_common_global_args(
     }
     let ca_cert = optional_string(arguments, "caCert")?;
     let clear_ca_cert = optional_bool(arguments, "clearCaCert")?.unwrap_or(false);
+    if ca_cert.is_some() && clear_ca_cert {
+        return Err(ProtocolError::invalid_params(
+            "Cannot use caCert with clearCaCert",
+        ));
+    }
     if let Some(ca_cert) = ca_cert {
         args.push("--ca-cert".to_string());
         args.push(ca_cert);
@@ -4271,9 +4276,9 @@ mod tests {
     }
 
     #[test]
-    fn common_global_args_prefer_ca_cert_over_clear() {
+    fn common_global_args_reject_ca_cert_with_clear() {
         let mut args = Vec::new();
-        append_common_global_args(
+        let error = append_common_global_args(
             &mut args,
             &json!({
                 "caCert": "/tmp/proxy-ca.pem",
@@ -4281,9 +4286,10 @@ mod tests {
             }),
             None,
         )
-        .unwrap();
+        .unwrap_err();
 
-        assert_eq!(args, vec!["--ca-cert", "/tmp/proxy-ca.pem"]);
+        assert!(error.message.contains("Cannot use caCert with clearCaCert"));
+        assert!(args.is_empty());
     }
 
     #[test]
