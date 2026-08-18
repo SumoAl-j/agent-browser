@@ -29,7 +29,7 @@ use windows_sys::Win32::Foundation::CloseHandle;
 #[cfg(windows)]
 use windows_sys::Win32::System::Threading::OpenProcess;
 
-use commands::{gen_id, parse_command, ParseError};
+use commands::{attach_ca_cert_to_launch_command, gen_id, parse_command, ParseError};
 use connection::{
     cleanup_stale_files, daemon_unreachable, ensure_daemon, get_socket_dir, is_pid_alive,
     send_command, walk_daemons, DaemonOptions, Response,
@@ -108,6 +108,36 @@ fn attach_pin_tab_to_command(cmd: &mut serde_json::Value, flags: &Flags) {
 
 fn attach_plugins_to_command(cmd: &mut serde_json::Value, plugins: &[plugins::PluginConfig]) {
     cmd["plugins"] = json!(plugins);
+}
+
+fn command_is_external_launch(cmd: &serde_json::Value) -> bool {
+    cmd.get("action").and_then(|value| value.as_str()) == Some("launch")
+        && (cmd.get("cdpUrl").is_some()
+            || cmd.get("cdpPort").is_some()
+            || cmd.get("provider").is_some()
+            || cmd
+                .get("autoConnect")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false))
+}
+
+fn build_provider_launch_command(provider: &str, flags: &Flags) -> serde_json::Value {
+    let mut launch_cmd = json!({
+        "id": gen_id(),
+        "action": "launch",
+        "provider": provider
+    });
+    launch_cmd["plugins"] = json!(flags.plugins.clone());
+    attach_script_launch_options(&mut launch_cmd, flags);
+    attach_allowed_domains_to_launch_command(&mut launch_cmd, flags);
+    attach_restore_config_to_command(&mut launch_cmd, flags);
+    attach_ca_cert_to_launch_command(&mut launch_cmd, flags);
+
+    if let Some(ref cs) = flags.color_scheme {
+        launch_cmd["colorScheme"] = json!(cs);
+    }
+
+    launch_cmd
 }
 
 fn restore_key_from_flags(flags: &Flags) -> Option<&str> {
@@ -202,7 +232,7 @@ fn incompatible_launch_mode_error(flags: &Flags) -> Option<&'static str> {
     None
 }
 
-fn should_send_local_launch_config(flags: &Flags) -> bool {
+fn should_send_local_launch_config(flags: &Flags, command: &serde_json::Value) -> bool {
     (flags.headed
         || flags.cli_headed
         || flags.executable_path.is_some()
@@ -230,6 +260,7 @@ fn should_send_local_launch_config(flags: &Flags) -> bool {
         && flags.cdp.is_none()
         && flags.provider.is_none()
         && !flags.auto_connect
+        && !command_is_external_launch(command)
 }
 
 fn attach_restore_config_to_command(cmd: &mut serde_json::Value, flags: &Flags) {
@@ -1385,12 +1416,7 @@ fn main() {
             launch_cmd["ignoreHTTPSErrors"] = json!(true);
         }
 
-        if let Some(ref ca) = flags.ca_cert {
-            launch_cmd["caCert"] = json!(ca);
-        }
-        if flags.clear_ca_cert {
-            launch_cmd["clearCaCert"] = json!(true);
-        }
+        attach_ca_cert_to_launch_command(&mut launch_cmd, &flags);
 
         if let Some(ref cs) = flags.color_scheme {
             launch_cmd["colorScheme"] = json!(cs);
@@ -1490,12 +1516,7 @@ fn main() {
             launch_cmd["ignoreHTTPSErrors"] = json!(true);
         }
 
-        if let Some(ref ca) = flags.ca_cert {
-            launch_cmd["caCert"] = json!(ca);
-        }
-        if flags.clear_ca_cert {
-            launch_cmd["clearCaCert"] = json!(true);
-        }
+        attach_ca_cert_to_launch_command(&mut launch_cmd, &flags);
 
         if let Some(ref cs) = flags.color_scheme {
             launch_cmd["colorScheme"] = json!(cs);
@@ -1526,19 +1547,7 @@ fn main() {
 
     // Launch with cloud provider if -p flag is set.
     if let Some(ref provider) = flags.provider {
-        let mut launch_cmd = json!({
-            "id": gen_id(),
-            "action": "launch",
-            "provider": provider
-        });
-        launch_cmd["plugins"] = json!(flags.plugins.clone());
-        attach_script_launch_options(&mut launch_cmd, &flags);
-        attach_allowed_domains_to_launch_command(&mut launch_cmd, &flags);
-        attach_restore_config_to_command(&mut launch_cmd, &flags);
-
-        if let Some(ref cs) = flags.color_scheme {
-            launch_cmd["colorScheme"] = json!(cs);
-        }
+        let launch_cmd = build_provider_launch_command(provider, &flags);
 
         let err = match send_command(launch_cmd, &flags.session) {
             Ok(resp) if resp.success => None,
@@ -1560,7 +1569,7 @@ fn main() {
     }
 
     // Launch headed browser or configure browser options (without CDP or provider)
-    if should_send_local_launch_config(&flags) {
+    if should_send_local_launch_config(&flags, &cmd) {
         let mut launch_cmd = json!({
             "id": gen_id(),
             "action": "launch",
@@ -1641,12 +1650,7 @@ fn main() {
             launch_cmd["ignoreHTTPSErrors"] = json!(true);
         }
 
-        if let Some(ref ca) = flags.ca_cert {
-            launch_cmd["caCert"] = json!(ca);
-        }
-        if flags.clear_ca_cert {
-            launch_cmd["clearCaCert"] = json!(true);
-        }
+        attach_ca_cert_to_launch_command(&mut launch_cmd, &flags);
 
         if flags.allow_file_access {
             launch_cmd["allowFileAccess"] = json!(true);
@@ -2104,6 +2108,64 @@ mod tests {
     }
 
     #[test]
+    fn test_provider_launch_command_preserves_ca_clear_transition() {
+        let mut flags = neutral_launch_config_flags();
+        flags.clear_ca_cert = true;
+
+        let cmd = build_provider_launch_command("browserbase", &flags);
+
+        assert_eq!(cmd["clearCaCert"], true);
+        assert!(cmd.get("caCert").is_none());
+    }
+
+    #[test]
+    fn test_ca_cert_launch_transition_distinguishes_set_omit_and_clear() {
+        let mut flags = neutral_launch_config_flags();
+        let mut omitted = json!({ "action": "launch" });
+        attach_ca_cert_to_launch_command(&mut omitted, &flags);
+        assert!(omitted.get("caCert").is_none());
+        assert!(omitted.get("clearCaCert").is_none());
+
+        flags.ca_cert = Some("/tmp/proxy-ca.pem".to_string());
+        let mut set = json!({ "action": "launch" });
+        attach_ca_cert_to_launch_command(&mut set, &flags);
+        assert_eq!(set["caCert"], "/tmp/proxy-ca.pem");
+        assert!(set.get("clearCaCert").is_none());
+
+        flags.ca_cert = None;
+        flags.clear_ca_cert = true;
+        let mut cleared = json!({ "action": "launch" });
+        attach_ca_cert_to_launch_command(&mut cleared, &flags);
+        assert!(cleared.get("caCert").is_none());
+        assert_eq!(cleared["clearCaCert"], true);
+    }
+
+    #[test]
+    fn test_connect_launch_command_preserves_ca_clear_transition() {
+        let mut flags = neutral_launch_config_flags();
+        flags.clear_ca_cert = true;
+        let cmd = parse_command(&["connect".to_string(), "9222".to_string()], &flags).unwrap();
+
+        assert_eq!(cmd["cdpPort"], 9222);
+        assert_eq!(cmd["clearCaCert"], true);
+        assert!(!should_send_local_launch_config(&flags, &cmd));
+    }
+
+    #[test]
+    fn test_ca_transition_is_attached_only_to_launch_commands() {
+        let mut flags = neutral_launch_config_flags();
+        flags.clear_ca_cert = true;
+        let mut launch = json!({ "action": "launch", "autoConnect": true });
+        let mut snapshot = json!({ "action": "snapshot" });
+
+        attach_ca_cert_to_launch_command(&mut launch, &flags);
+        attach_ca_cert_to_launch_command(&mut snapshot, &flags);
+
+        assert_eq!(launch["clearCaCert"], true);
+        assert!(snapshot.get("clearCaCert").is_none());
+    }
+
+    #[test]
     fn test_published_schemas_define_pin_tab_boolean() {
         let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -2153,13 +2215,14 @@ mod tests {
     #[test]
     fn test_allowed_domains_requests_local_launch_configuration() {
         let mut flags = neutral_launch_config_flags();
-        assert!(!should_send_local_launch_config(&flags));
+        let command = json!({ "action": "snapshot" });
+        assert!(!should_send_local_launch_config(&flags, &command));
 
         flags.allowed_domains = Some(vec!["example.com".to_string()]);
-        assert!(should_send_local_launch_config(&flags));
+        assert!(should_send_local_launch_config(&flags, &command));
 
         flags.cdp = Some("9222".to_string());
-        assert!(!should_send_local_launch_config(&flags));
+        assert!(!should_send_local_launch_config(&flags, &command));
     }
 
     #[test]

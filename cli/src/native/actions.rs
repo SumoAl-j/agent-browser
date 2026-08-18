@@ -343,7 +343,10 @@ fn validate_ca_cert_launch_mode(
         return Ok(());
     }
     if external_launch {
-        return Err("--ca-cert requires a locally launched Chromium browser on Linux".to_string());
+        return Err(
+            "CA trust is active for this session and requires a locally launched Chromium browser on Linux. Pass --no-ca-cert to clear it before using CDP, auto-connect, or a provider."
+                .to_string(),
+        );
     }
     if engine.is_some_and(|value| !value.eq_ignore_ascii_case("chrome")) {
         return Err("--ca-cert is supported only with the Chrome engine on Linux".to_string());
@@ -4455,8 +4458,20 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
 
     if let Some(provider) = provider_name {
         match provider.to_lowercase().as_str() {
-            "ios" => return launch_ios(cmd, state).await,
-            "safari" => return launch_safari(cmd, state).await,
+            "ios" => {
+                let result = launch_ios(cmd, state).await;
+                if result.is_ok() {
+                    state.effective_ca_cert = effective_ca_cert;
+                }
+                return result;
+            }
+            "safari" => {
+                let result = launch_safari(cmd, state).await;
+                if result.is_ok() {
+                    state.effective_ca_cert = effective_ca_cert;
+                }
+                return result;
+            }
             _ => {
                 let command_plugins = plugins_from_command_or_env(cmd);
                 let conn = providers::connect_provider_with_plugins_and_options(
@@ -13467,6 +13482,28 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"data":{}}'
 
         let cleared = resolve_effective_ca_cert(&json!({ "clearCaCert": true }), &state).unwrap();
         assert!(cleared.is_none());
+    }
+
+    #[test]
+    fn test_provider_compatibility_uses_resolved_ca_cert_transition() {
+        let mut state = DaemonState::new();
+        state.effective_ca_cert = Some(EffectiveCaCert {
+            path: "/tmp/first.pem".to_string(),
+            bundle: crate::ca_bundle::test_bundle(b"first"),
+        });
+
+        let retained = resolve_effective_ca_cert(&json!({}), &state).unwrap();
+        let mut retained_options = LaunchOptions::default();
+        apply_effective_ca_cert(&mut retained_options, &retained);
+        let error =
+            validate_ca_cert_launch_mode(&retained_options, Some("chrome"), true).unwrap_err();
+        assert!(error.contains("CA trust is active for this session"));
+        assert!(error.contains("--no-ca-cert"));
+
+        let cleared = resolve_effective_ca_cert(&json!({ "clearCaCert": true }), &state).unwrap();
+        let mut cleared_options = LaunchOptions::default();
+        apply_effective_ca_cert(&mut cleared_options, &cleared);
+        assert!(validate_ca_cert_launch_mode(&cleared_options, Some("chrome"), true).is_ok());
     }
 
     #[test]

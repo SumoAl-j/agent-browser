@@ -669,7 +669,9 @@ fn resolve_prepared_nss_home(options: &LaunchOptions) -> Result<Option<PreparedN
 #[cfg(target_os = "linux")]
 fn run_certutil(args: &[&str], action: &str) -> Result<(), String> {
     let output = Command::new("certutil").args(args).output().map_err(|e| {
-        format!("Failed to {action}: could not run certutil ({e}). Install libnss3-tools.")
+        format!(
+            "Failed to {action}: could not run certutil ({e}). Run agent-browser install --with-deps, or install libnss3-tools on Debian/Ubuntu or nss-tools on RPM Linux."
+        )
     })?;
     if output.status.success() {
         return Ok(());
@@ -678,7 +680,7 @@ fn run_certutil(args: &[&str], action: &str) -> Result<(), String> {
     let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
     if detail.is_empty() {
         Err(format!(
-            "Failed to {action}: certutil exited with {}. Install or repair libnss3-tools.",
+            "Failed to {action}: certutil exited with {}. Run agent-browser install --with-deps, or repair libnss3-tools on Debian/Ubuntu or nss-tools on RPM Linux.",
             output.status
         ))
     } else {
