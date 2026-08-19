@@ -1061,7 +1061,6 @@ Create an `agent-browser.json` file to set persistent defaults instead of repeat
   "userAgent": "my-agent/1.0",
   "hideScrollbars": false,
   "ignoreHttpsErrors": true,
-  "caCert": "/etc/ssl/certs/proxy-ca.crt",
   "plugins": [
     {
       "name": "vault",
@@ -1069,6 +1068,15 @@ Create an `agent-browser.json` file to set persistent defaults instead of repeat
       "capabilities": ["credential.read"]
     }
   ]
+}
+```
+
+**Example proxy CA configuration:**
+
+```json
+{
+  "proxy": "http://localhost:8080",
+  "caCert": "/etc/ssl/certs/proxy-ca.crt"
 }
 ```
 

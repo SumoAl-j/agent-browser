@@ -2438,6 +2438,34 @@ mod tests {
     }
 
     #[test]
+    fn test_readme_proxy_ca_config_uses_compatible_options() {
+        let readme = include_str!("../../README.md");
+        let marker = "**Example proxy CA configuration:**";
+        let example = readme
+            .split_once(marker)
+            .and_then(|(_, rest)| rest.split_once("```json"))
+            .and_then(|(_, rest)| rest.split_once("```"))
+            .map(|(json, _)| json.trim())
+            .expect("README proxy CA configuration example");
+        let config: flags::Config = serde_json::from_str(example).unwrap();
+        let mut flags = neutral_launch_config_flags();
+        flags.profile = config.profile;
+        flags.ignore_https_errors = config.ignore_https_errors.unwrap_or(false);
+        flags.ca_cert = config.ca_cert;
+        flags.clear_ca_cert = config.clear_ca_cert.unwrap_or(false);
+        flags.cdp = config.cdp;
+        flags.auto_connect = config.auto_connect.unwrap_or(false);
+        flags.provider = config.provider;
+        flags.engine = config.engine;
+
+        let error = incompatible_launch_mode_error(&flags);
+        assert!(
+            error.is_none() || error == Some("--ca-cert is currently supported only on Linux"),
+            "README proxy CA configuration is incompatible: {error:?}"
+        );
+    }
+
+    #[test]
     fn test_incompatible_launch_mode_error_allows_compatible_flags() {
         assert_eq!(
             incompatible_launch_mode_error(&launch_mode_flags(true, false, false, false)),
