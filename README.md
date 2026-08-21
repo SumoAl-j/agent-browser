@@ -510,6 +510,7 @@ agent-browser skills                  # List available skills
 agent-browser skills list             # Same as above
 agent-browser skills get <name>       # Output a skill's full content
 agent-browser skills get <name> --full  # Include references and templates
+agent-browser skills get protected-vercel-deployments  # Access protected Vercel deployments
 agent-browser skills get --all        # Output every skill
 agent-browser skills path [name]      # Print skill directory path
 ```

@@ -3411,6 +3411,7 @@ Examples:
   agent-browser skills list
   agent-browser skills get core
   agent-browser skills get core --full
+  agent-browser skills get protected-vercel-deployments
   agent-browser skills get electron --full
   agent-browser skills get --all
   agent-browser skills path core
@@ -3503,7 +3504,8 @@ Start here (for AI agents):
   Skills ship with the CLI (always version-matched) and include workflow
   patterns, ref/selector usage, and copy-paste examples. Prefer this over
   guessing commands from flag docs alone. Specialized skills cover Electron
-  apps, Slack, exploratory testing, and cloud browser providers.
+  apps, Slack, exploratory testing, protected Vercel deployments, and cloud
+  browser providers.
 
   skills [list]                List available skills
   skills get core              Core usage guide (overview + common patterns)
