@@ -12,11 +12,14 @@ Use the caller's existing Vercel identity and a short-lived OIDC token. Do not d
 
 A local development token for the target project can access that project's protected Preview deployments through the default Trusted Sources self-access rule. No Trusted Sources configuration is normally required.
 
-Confirm the local identity:
+Confirm the local identity and Vercel CLI version:
 
 ```bash
 vc whoami
+vc --version
 ```
+
+Require Vercel CLI `53.3.0` or newer before running `vc project token`. Versions `50.25.0` through `53.2.x` write the token to stderr, so command substitution captures nothing and the credential can appear in logs. If the installed version is older, stop and ask the user to upgrade it. Do not attempt to capture or recover the token from stderr.
 
 Set the target project and scope explicitly. If they cannot be inferred safely, ask the user. In a directory whose existing `.vercel/project.json` link has been verified against the target, `vc project token` without a project name is also valid. Do not run `vc link` merely to get an OIDC token: current Vercel CLI versions also pull development variables into `.env.local` when linking.
 
@@ -40,14 +43,6 @@ agent-browser snapshot -i
 
 Continue the normal workflow in that same session. The header is scoped to the target origin and applies to the document, scripts, styles, fonts, and in-page requests. If the browser session is closed or restarted, repeat the authenticated `open` command.
 
-On older Vercel CLI versions without `vc project token`, inject the target project's development environment without printing the token:
-
-```bash
-vc env run --project "$VERCEL_PROJECT" --scope "$VERCEL_SCOPE" -- sh -c \
-  'test -n "$VERCEL_OIDC_TOKEN" && agent-browser open "$1" --headers "{\"x-vercel-trusted-oidc-idp-token\":\"$VERCEL_OIDC_TOKEN\"}"' \
-  sh "$VERCEL_PREVIEW_URL"
-```
-
 Never print the token, paste it into source, or save it in an environment file.
 
 ## Other environments and callers
@@ -68,6 +63,7 @@ Stop and hand off the exact rule to the human. Do not use browser automation to 
 The same-project development to Preview path should run without human intervention when the Vercel CLI is already authenticated and the target project and scope are known. A human is needed only when:
 
 - the Vercel CLI has no authenticated identity and no existing `VERCEL_TOKEN`; interactive `vc login` requires the user;
+- the installed Vercel CLI is older than `53.3.0` and must be upgraded before token minting;
 - the correct target project or scope cannot be inferred safely for token minting;
 - a Trusted Sources rule must be added or changed; the dashboard is the only supported management surface, and this changes access control;
 - Secure Backend Access with OIDC Federation was disabled on the calling project and must be re-enabled in **Settings → Security**; or
