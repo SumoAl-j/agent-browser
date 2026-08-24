@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.35.0
+
+<p className="text-[#888] text-sm">August 24, 2026</p>
+
+### New Features
+
+- Added **private proxy CA trust for locally launched Chromium on Linux**. Use `--ca-cert <path>`, `AGENT_BROWSER_CA_CERT`, or `caCert` in config and MCP to import a PEM bundle or DER certificate into an isolated NSS trust store without disabling hostname, validity, or unrelated-authority verification. The effective CA persists across commands in a running session, equivalent certificate content reuses Chromium, and `--no-ca-cert` explicitly clears retained trust. Unsupported launch modes and conflicting CA options return actionable errors (#1669)
+
+### Improvements
+
+- Added a bundled **protected Vercel deployments skill** that guides agents through short-lived Trusted Sources OIDC authentication, authorized automation bypasses, and explicit human handoffs for dashboard-only configuration (#1705)
+
+---
+
 ## v0.34.0
 
 <p className="text-[#888] text-sm">August 10, 2026</p>

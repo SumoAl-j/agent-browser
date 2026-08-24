@@ -1,8 +1,25 @@
 # agent-browser
 
-## 0.34.0
+## 0.35.0
 
 <!-- release:start -->
+### New Features
+
+- Added **private proxy CA trust for locally launched Chromium on Linux**. Use `--ca-cert <path>`, `AGENT_BROWSER_CA_CERT`, or `caCert` in config and MCP to import a PEM bundle or DER certificate into an isolated NSS trust store without disabling hostname, validity, or unrelated-authority verification. The effective CA persists across commands in a running session, equivalent certificate content reuses Chromium, and `--no-ca-cert` explicitly clears retained trust. Unsupported launch modes and conflicting CA options return actionable errors (#1669)
+
+### Improvements
+
+- Added a bundled **protected Vercel deployments skill** that guides agents through short-lived Trusted Sources OIDC authentication, authorized automation bypasses, and explicit human handoffs for dashboard-only configuration (#1705)
+
+### Contributors
+
+- @Railly
+- @ctate
+- @bilby91
+<!-- release:end -->
+
+## 0.34.0
+
 ### New Features
 
 - Added **persistent session-to-tab binding for shared Chrome sessions**. Named sessions connected through `--cdp` or `--auto-connect` now remember their CDP target across commands and daemon restarts, and CDP target ids can be used directly as tab references. Start each session with `--pin-tab` to make the binding strict, so a tab closed externally returns a stable `tab_gone` error instead of silently adopting a neighboring tab. JSON output includes `data.targetId` and an optional sanitized `data.lastUrl`; batch exposes the same recovery data under `result` (#1589)
@@ -23,7 +40,6 @@
 - @soichisumi
 - @dandaka
 - @mvanhorn
-<!-- release:end -->
 
 ## 0.33.2
 
