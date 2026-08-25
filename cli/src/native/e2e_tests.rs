@@ -5936,6 +5936,50 @@ async fn e2e_stream_url_tracks_active_main_frame_navigation_categories() {
         .expect("background tab should navigate");
     expect_no_stream_url(&mut ws, tokio::time::Duration::from_millis(500)).await;
 
+    state
+        .browser
+        .as_ref()
+        .expect("browser should exist")
+        .client
+        .send_command(
+            "Target.createTarget",
+            Some(json!({ "url": format!("{base_url}/external") })),
+            None,
+        )
+        .await
+        .expect("external tab should open");
+    tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+
+    let resp = execute_command(&json!({ "id": "10", "action": "url" }), &mut state).await;
+    assert_success(&resp);
+    assert_eq!(get_data(&resp)["url"], format!("{base_url}/external"));
+
+    let external_session = state
+        .browser
+        .as_ref()
+        .expect("browser should exist")
+        .active_session_id()
+        .expect("external tab should become active")
+        .to_string();
+    state
+        .browser
+        .as_ref()
+        .expect("browser should exist")
+        .client
+        .send_command(
+            "Runtime.evaluate",
+            Some(json!({
+                "expression": "history.pushState({}, '', '/external-spa'); location.href"
+            })),
+            Some(&external_session),
+        )
+        .await
+        .expect("external tab should navigate within its document");
+    assert_eq!(
+        next_stream_url(&mut ws).await,
+        format!("{base_url}/external-spa")
+    );
+
     let resp = execute_command(&json!({ "id": "99", "action": "close" }), &mut state).await;
     assert_success(&resp);
     server.abort();

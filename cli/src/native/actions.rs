@@ -2791,17 +2791,10 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
 
         if let Some(ref mgr) = state.browser {
             let tabs = mgr.tab_list();
-            if matches!(
-                action,
-                "tab_new" | "tab_switch" | "tab_close" | "open" | "navigate"
-            ) {
-                let session_id = mgr.active_session_id().ok().map(|s| s.to_string());
-                server
-                    .bind_cdp_session_and_broadcast_tabs(session_id, &tabs)
-                    .await;
-            } else {
-                server.broadcast_tabs(&tabs).await;
-            }
+            let session_id = mgr.active_session_id().ok().map(|s| s.to_string());
+            server
+                .bind_cdp_session_and_broadcast_tabs(session_id, &tabs)
+                .await;
         }
     }
 
