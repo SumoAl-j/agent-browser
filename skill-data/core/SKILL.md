@@ -445,6 +445,8 @@ EOF
 --profile <name|path>   # use a Chrome profile (login state survives)
 --headers <json>        # HTTP headers scoped to the URL's origin
 --proxy <url>           # proxy server
+--ca-cert <path>        # trust a CA in local Chromium on Linux (install --with-deps provides certutil)
+--no-ca-cert            # clear CA trust retained by the running session
 --state <path>          # load saved auth state from JSON
 --restore [name]        # auto-save/restore session state, defaults to --session
 --restore-save <policy> # auto, always, or never
@@ -457,6 +459,7 @@ EOF
 - **Slack workspace automation**: `agent-browser skills get slack`
 - **Exploratory testing / QA / bug hunts**: `agent-browser skills get dogfood`
 - **Vercel Sandbox microVMs**: `agent-browser skills get vercel-sandbox`
+- **Vercel deployment behind Authentication, SSO, or Deployment Protection**: `agent-browser skills get protected-vercel-deployments`
 - **AWS Bedrock AgentCore cloud browser**: `agent-browser skills get agentcore`
 
 ## Accessibility audits
@@ -512,6 +515,6 @@ That pulls in:
 - `references/profiling.md` — Chrome DevTools tracing and profiling
 - `references/video-recording.md` — video capture options
 - `references/streaming.md` covers live viewport streaming, remote input, per-client frame rate, and the encoding vars that set bandwidth cost
-- `references/proxy-support.md` — proxy configuration
+- `references/proxy-support.md`: proxy configuration and CA certificates for HTTPS interception proxies
 - `references/webgpu.md` — screenshots/video of WebGPU pages (three.js, Babylon.js), Linux/CI setup
 - `templates/*` — starter shell scripts for auth, capture, form automation
