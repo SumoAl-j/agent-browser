@@ -6216,6 +6216,9 @@ async fn handle_diff_url(cmd: &Value, state: &mut DaemonState) -> Result<Value, 
         .map(WaitUntil::from_str)
         .unwrap_or(WaitUntil::Load);
 
+    // Each navigation can replace the document, so invalidate refs before it starts.
+    state.ref_map.clear();
+
     // Navigate to URL1 and snapshot
     mgr.navigate(url1, wait_until).await?;
     let session_id = mgr.active_session_id()?.to_string();
@@ -6232,6 +6235,7 @@ async fn handle_diff_url(cmd: &Value, state: &mut DaemonState) -> Result<Value, 
     .await?;
 
     // Navigate to URL2 and snapshot
+    state.ref_map.clear();
     mgr.navigate(url2, wait_until).await?;
     let mut snap2_ref_map = RefMap::new();
     let snap2 = snapshot::take_snapshot(

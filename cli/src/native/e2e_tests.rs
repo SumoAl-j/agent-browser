@@ -3467,41 +3467,27 @@ async fn e2e_diff_url_aligns_refs_after_snapshot() {
     .await;
     assert_success(&resp);
 
+    let stale_url = "data:text/html,<button id='stale-action'>Stale action</button>";
     let url = native_test_fixture_url("snapshot_diff_probe");
     let resp = execute_command(
-        &json!({ "id": "2", "action": "navigate", "url": url }),
+        &json!({ "id": "2", "action": "navigate", "url": stale_url }),
         &mut state,
     )
     .await;
     assert_success(&resp);
 
-    // A failed URL diff must preserve the refs from the last successful snapshot.
+    // Populate refs that must be invalidated once the URL diff starts navigating.
     let resp = execute_command(
         &json!({
             "id": "3",
             "action": "snapshot",
-            "selector": "#primary-action"
+            "selector": "#stale-action"
         }),
         &mut state,
     )
     .await;
     assert_success(&resp);
-    let refs_before_failure = state
-        .ref_map
-        .entries_sorted()
-        .into_iter()
-        .map(|(ref_id, entry)| {
-            (
-                ref_id,
-                entry.backend_node_id,
-                entry.role,
-                entry.name,
-                entry.nth,
-                entry.selector,
-                entry.frame_id,
-            )
-        })
-        .collect::<Vec<_>>();
+    assert!(state.ref_map.get("e1").is_some());
 
     let resp = execute_command(
         &json!({
@@ -3514,38 +3500,35 @@ async fn e2e_diff_url_aligns_refs_after_snapshot() {
     )
     .await;
     assert_eq!(resp["success"], false);
-    let refs_after_failure = state
-        .ref_map
-        .entries_sorted()
-        .into_iter()
-        .map(|(ref_id, entry)| {
-            (
-                ref_id,
-                entry.backend_node_id,
-                entry.role,
-                entry.name,
-                entry.nth,
-                entry.selector,
-                entry.frame_id,
-            )
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(refs_after_failure, refs_before_failure);
+    assert!(state.ref_map.entries_sorted().is_empty());
 
     let resp = execute_command(
-        &json!({ "id": "5", "action": "click", "selector": "e1" }),
+        &json!({
+            "id": "5",
+            "action": "evaluate",
+            "script": "document.querySelector('#primary-action')?.textContent"
+        }),
         &mut state,
     )
     .await;
     assert_success(&resp);
+    assert_eq!(get_data(&resp)["result"], "Primary action");
+
+    let resp = execute_command(
+        &json!({ "id": "6", "action": "click", "selector": "e1" }),
+        &mut state,
+    )
+    .await;
+    assert_eq!(resp["success"], false);
+    assert!(resp["error"].as_str().unwrap().contains("Unknown ref: e1"));
 
     // Populate the session ref map before comparing the same URL to itself.
-    let resp = execute_command(&json!({ "id": "6", "action": "snapshot" }), &mut state).await;
+    let resp = execute_command(&json!({ "id": "7", "action": "snapshot" }), &mut state).await;
     assert_success(&resp);
 
     let resp = execute_command(
         &json!({
-            "id": "7",
+            "id": "8",
             "action": "diff_url",
             "url1": url,
             "url2": url
