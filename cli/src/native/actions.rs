@@ -6156,12 +6156,13 @@ async fn handle_diff_snapshot(cmd: &Value, state: &mut DaemonState) -> Result<Va
         ..SnapshotOptions::default()
     };
     // Start from the same ref base as a normal baseline snapshot so unchanged lines align.
-    state.ref_map.clear();
+    // Build the replacement separately so a failed diff leaves the existing refs usable.
+    let mut current_ref_map = RefMap::new();
     let current = snapshot::take_snapshot(
         &mgr.client,
         &session_id,
         &options,
-        &mut state.ref_map,
+        &mut current_ref_map,
         state.active_frame_id.as_deref(),
         &state.iframe_sessions,
     )
@@ -6171,13 +6172,23 @@ async fn handle_diff_snapshot(cmd: &Value, state: &mut DaemonState) -> Result<Va
 
     let baseline_text = match baseline {
         Some(b) if std::path::Path::new(b).exists() => {
-            std::fs::read_to_string(b).map_err(|e| format!("Failed to read baseline: {}", e))?
+            let mut contents = std::fs::read_to_string(b)
+                .map_err(|e| format!("Failed to read baseline: {}", e))?;
+            // Plain CLI output ends with one newline when redirected to a baseline file.
+            if contents.ends_with('\n') {
+                contents.pop();
+                if contents.ends_with('\r') {
+                    contents.pop();
+                }
+            }
+            contents
         }
         Some(b) => b.to_string(),
         None => String::new(),
     };
 
     let result = diff::diff_snapshots(&baseline_text, &current);
+    state.ref_map = current_ref_map;
     Ok(json!({
         "diff": result.diff,
         "additions": result.additions,
@@ -6209,12 +6220,12 @@ async fn handle_diff_url(cmd: &Value, state: &mut DaemonState) -> Result<Value, 
     mgr.navigate(url1, wait_until).await?;
     let session_id = mgr.active_session_id()?.to_string();
     let options = SnapshotOptions::default();
-    state.ref_map.clear();
+    let mut snap1_ref_map = RefMap::new();
     let snap1 = snapshot::take_snapshot(
         &mgr.client,
         &session_id,
         &options,
-        &mut state.ref_map,
+        &mut snap1_ref_map,
         None,
         &state.iframe_sessions,
     )
@@ -6222,18 +6233,19 @@ async fn handle_diff_url(cmd: &Value, state: &mut DaemonState) -> Result<Value, 
 
     // Navigate to URL2 and snapshot
     mgr.navigate(url2, wait_until).await?;
-    state.ref_map.clear();
+    let mut snap2_ref_map = RefMap::new();
     let snap2 = snapshot::take_snapshot(
         &mgr.client,
         &session_id,
         &options,
-        &mut state.ref_map,
+        &mut snap2_ref_map,
         None,
         &state.iframe_sessions,
     )
     .await?;
 
     let result = diff::diff_text(&snap1, &snap2);
+    state.ref_map = snap2_ref_map;
     Ok(json!({
         "diff": result,
         "url1": url1,

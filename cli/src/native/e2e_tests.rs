@@ -3380,11 +3380,38 @@ async fn e2e_diff_snapshot() {
     assert_success(&resp);
     let baseline = get_data(&resp)["snapshot"].as_str().unwrap().to_string();
     assert!(baseline.starts_with("- button \"Primary action\" [ref=e1]"));
+    let baseline_dir = tempfile::tempdir().unwrap();
+    let baseline_path = baseline_dir.path().join("baseline.txt");
+    std::fs::write(&baseline_path, format!("{}\n", baseline)).unwrap();
+
+    // A failed diff must preserve the refs from the last successful snapshot.
+    let resp = execute_command(
+        &json!({
+            "id": "4",
+            "action": "diff_snapshot",
+            "baseline": baseline_path,
+            "selector": "#missing"
+        }),
+        &mut state,
+    )
+    .await;
+    assert_eq!(resp["success"], false);
+    assert!(resp["error"]
+        .as_str()
+        .unwrap()
+        .contains("did not match any element"));
+
+    let resp = execute_command(
+        &json!({ "id": "5", "action": "click", "selector": "e1" }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
 
     // Repeated diffs must each begin a fresh ref-numbering epoch.
-    for id in ["4", "5"] {
+    for id in ["6", "7"] {
         let resp = execute_command(
-            &json!({ "id": id, "action": "diff_snapshot", "baseline": baseline }),
+            &json!({ "id": id, "action": "diff_snapshot", "baseline": baseline_path }),
             &mut state,
         )
         .await;
@@ -3399,7 +3426,7 @@ async fn e2e_diff_snapshot() {
     // Modify the page
     let resp = execute_command(
         &json!({
-            "id": "6",
+            "id": "8",
             "action": "evaluate",
             "script": "document.querySelector('#primary-action').textContent = 'Updated action'"
         }),
@@ -3410,7 +3437,7 @@ async fn e2e_diff_snapshot() {
 
     // Diff against baseline
     let resp = execute_command(
-        &json!({ "id": "7", "action": "diff_snapshot", "baseline": baseline }),
+        &json!({ "id": "9", "action": "diff_snapshot", "baseline": baseline_path }),
         &mut state,
     )
     .await;
@@ -3448,13 +3475,77 @@ async fn e2e_diff_url_aligns_refs_after_snapshot() {
     .await;
     assert_success(&resp);
 
-    // Populate the session ref map before comparing the same URL to itself.
-    let resp = execute_command(&json!({ "id": "3", "action": "snapshot" }), &mut state).await;
+    // A failed URL diff must preserve the refs from the last successful snapshot.
+    let resp = execute_command(
+        &json!({
+            "id": "3",
+            "action": "snapshot",
+            "selector": "#primary-action"
+        }),
+        &mut state,
+    )
+    .await;
     assert_success(&resp);
+    let refs_before_failure = state
+        .ref_map
+        .entries_sorted()
+        .into_iter()
+        .map(|(ref_id, entry)| {
+            (
+                ref_id,
+                entry.backend_node_id,
+                entry.role,
+                entry.name,
+                entry.nth,
+                entry.selector,
+                entry.frame_id,
+            )
+        })
+        .collect::<Vec<_>>();
 
     let resp = execute_command(
         &json!({
             "id": "4",
+            "action": "diff_url",
+            "url1": url,
+            "url2": "http://[invalid"
+        }),
+        &mut state,
+    )
+    .await;
+    assert_eq!(resp["success"], false);
+    let refs_after_failure = state
+        .ref_map
+        .entries_sorted()
+        .into_iter()
+        .map(|(ref_id, entry)| {
+            (
+                ref_id,
+                entry.backend_node_id,
+                entry.role,
+                entry.name,
+                entry.nth,
+                entry.selector,
+                entry.frame_id,
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(refs_after_failure, refs_before_failure);
+
+    let resp = execute_command(
+        &json!({ "id": "5", "action": "click", "selector": "e1" }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+
+    // Populate the session ref map before comparing the same URL to itself.
+    let resp = execute_command(&json!({ "id": "6", "action": "snapshot" }), &mut state).await;
+    assert_success(&resp);
+
+    let resp = execute_command(
+        &json!({
+            "id": "7",
             "action": "diff_url",
             "url1": url,
             "url2": url
