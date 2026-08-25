@@ -12,13 +12,30 @@
 
 use rustls::pki_types::CertificateDer;
 use rustls::RootCertStore;
+use sha2::{Digest, Sha256};
+
+#[derive(Clone, Debug)]
+pub struct CaBundle {
+    certs: Vec<CertificateDer<'static>>,
+    digest: [u8; 32],
+}
+
+impl CaBundle {
+    pub fn certificates(&self) -> &[CertificateDer<'static>] {
+        &self.certs
+    }
+
+    pub fn digest(&self) -> &[u8; 32] {
+        &self.digest
+    }
+}
 
 /// Read and validate every certificate in a CA file.
 ///
 /// Nothing is returned that a trust-anchor conversion rejected. A file that yields no
 /// usable certificate is an error; a partially valid PEM bundle is an error
 /// too, so two consumers can never end up trusting different subsets of it.
-pub fn load(path: &str) -> Result<Vec<CertificateDer<'static>>, String> {
+pub fn load(path: &str) -> Result<CaBundle, String> {
     let data =
         std::fs::read(path).map_err(|e| format!("Failed to read CA certificate '{path}': {e}"))?;
 
@@ -35,14 +52,38 @@ pub fn load(path: &str) -> Result<Vec<CertificateDer<'static>>, String> {
         validate(&cert).map_err(|e| {
             format!("'{path}' holds no PEM certificate and is not a DER certificate: {e}")
         })?;
-        return Ok(vec![cert]);
+        return Ok(bundle(vec![cert]));
     }
 
     for cert in &certs {
         validate(cert).map_err(|e| format!("Rejected CA certificate in '{path}': {e}"))?;
     }
 
-    Ok(certs)
+    Ok(bundle(certs))
+}
+
+fn bundle(mut certs: Vec<CertificateDer<'static>>) -> CaBundle {
+    certs.sort_by(|left, right| left.as_ref().cmp(right.as_ref()));
+    certs.dedup_by(|left, right| left.as_ref() == right.as_ref());
+    let mut hasher = Sha256::new();
+    for cert in &certs {
+        hasher.update((cert.len() as u64).to_be_bytes());
+        hasher.update(cert.as_ref());
+    }
+    CaBundle {
+        certs,
+        digest: hasher.finalize().into(),
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn test_bundle(identity: &[u8]) -> CaBundle {
+    let mut hasher = Sha256::new();
+    hasher.update(identity);
+    CaBundle {
+        certs: Vec::new(),
+        digest: hasher.finalize().into(),
+    }
 }
 
 /// True when a trust-anchor conversion accepts these bytes as an X.509
@@ -98,8 +139,21 @@ JtnWOCSAT+dNsAXmz4ebm7kp9OnpLLKjvrNEUNPA20J5S+BXTtPv7x/koRwSX35M\n\
     fn a_pem_bundle_loads_every_certificate() {
         let path = write("ca.pem", format!("{}{}", pem(), pem()).as_bytes());
         let certs = load(path.to_str().unwrap()).unwrap();
-        assert_eq!(certs.len(), 2);
+        assert_eq!(certs.certificates().len(), 1);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn bundle_identity_ignores_duplicate_certificates() {
+        let single_path = write("single.pem", pem().as_bytes());
+        let duplicate_path = write("duplicate.pem", format!("{}{}", pem(), pem()).as_bytes());
+
+        let single = load(single_path.to_str().unwrap()).unwrap();
+        let duplicate = load(duplicate_path.to_str().unwrap()).unwrap();
+
+        assert_eq!(single.digest(), duplicate.digest());
+        let _ = std::fs::remove_dir_all(single_path.parent().unwrap());
+        let _ = std::fs::remove_dir_all(duplicate_path.parent().unwrap());
     }
 
     #[test]
@@ -108,7 +162,10 @@ JtnWOCSAT+dNsAXmz4ebm7kp9OnpLLKjvrNEUNPA20J5S+BXTtPv7x/koRwSX35M\n\
         // it. A prefix check on "-----BEGIN" would send this to the DER branch.
         let body = format!("subject=CN=test-ca\nissuer=CN=test-ca\n{}", pem());
         let path = write("ca.pem", body.as_bytes());
-        assert_eq!(load(path.to_str().unwrap()).unwrap().len(), 1);
+        assert_eq!(
+            load(path.to_str().unwrap()).unwrap().certificates().len(),
+            1
+        );
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
@@ -120,7 +177,10 @@ JtnWOCSAT+dNsAXmz4ebm7kp9OnpLLKjvrNEUNPA20J5S+BXTtPv7x/koRwSX35M\n\
             first.to_vec()
         };
         let path = write("ca.der", &der);
-        assert_eq!(load(path.to_str().unwrap()).unwrap().len(), 1);
+        assert_eq!(
+            load(path.to_str().unwrap()).unwrap().certificates().len(),
+            1
+        );
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 

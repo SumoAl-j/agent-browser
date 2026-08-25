@@ -604,10 +604,6 @@ fn daemon_config_fingerprint(opts: &DaemonOptions) -> String {
     opts.idle_timeout.hash(&mut hasher);
     opts.default_timeout.hash(&mut hasher);
     opts.no_auto_dialog.hash(&mut hasher);
-    opts.ca_cert.hash(&mut hasher);
-    if let Some(path) = opts.ca_cert {
-        std::fs::read(path).ok().hash(&mut hasher);
-    }
     format!("{:016x}", hasher.finish())
 }
 
@@ -1318,33 +1314,6 @@ mod tests {
             daemon_config_fingerprint(&domains_changed),
             "allowed domains are browser launch state, not daemon identity"
         );
-    }
-
-    #[test]
-    fn test_daemon_config_fingerprint_tracks_ca_path_content_and_removal() {
-        let dir = tempfile::tempdir().unwrap();
-        let first_path = dir.path().join("first.pem");
-        let second_path = dir.path().join("second.pem");
-        fs::write(&first_path, b"first").unwrap();
-        fs::write(&second_path, b"first").unwrap();
-        let first = first_path.to_str().unwrap();
-        let second = second_path.to_str().unwrap();
-
-        let without_ca = test_daemon_options(None, false, None);
-        let mut with_first = test_daemon_options(None, false, None);
-        with_first.ca_cert = Some(first);
-        let mut with_second = test_daemon_options(None, false, None);
-        with_second.ca_cert = Some(second);
-
-        let initial = daemon_config_fingerprint(&with_first);
-        assert_ne!(daemon_config_fingerprint(&without_ca), initial);
-        assert_ne!(initial, daemon_config_fingerprint(&with_second));
-
-        fs::write(&first_path, b"changed").unwrap();
-        assert_ne!(initial, daemon_config_fingerprint(&with_first));
-
-        fs::remove_file(&first_path).unwrap();
-        assert_ne!(initial, daemon_config_fingerprint(&with_first));
     }
 
     #[test]

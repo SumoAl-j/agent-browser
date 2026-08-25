@@ -1915,6 +1915,13 @@ fn tool(name: &str, title: &str, description: &str, properties: Value, required:
         }),
     );
     props.insert(
+        "clearCaCert".to_string(),
+        json!({
+            "type": "boolean",
+            "description": "Explicitly clear CA trust retained by the running browser session."
+        }),
+    );
+    props.insert(
         "idleTimeout".to_string(),
         json!({
             "type": "string",
@@ -3595,9 +3602,18 @@ fn append_common_global_args(
             args.push(domains.join(","));
         }
     }
-    if let Some(ca_cert) = optional_string(arguments, "caCert")? {
+    let ca_cert = optional_string(arguments, "caCert")?;
+    let clear_ca_cert = optional_bool(arguments, "clearCaCert")?.unwrap_or(false);
+    if ca_cert.is_some() && clear_ca_cert {
+        return Err(ProtocolError::invalid_params(
+            "Cannot use caCert with clearCaCert",
+        ));
+    }
+    if let Some(ca_cert) = ca_cert {
         args.push("--ca-cert".to_string());
         args.push(ca_cert);
+    } else if clear_ca_cert {
+        args.push("--no-ca-cert".to_string());
     }
     if let Some(use_system_ca) = optional_bool(arguments, "useSystemCa")? {
         args.push("--use-system-ca".to_string());
@@ -4262,12 +4278,38 @@ mod tests {
     }
 
     #[test]
+    fn common_global_args_include_clear_ca_cert() {
+        let mut args = Vec::new();
+
+        append_common_global_args(&mut args, &json!({ "clearCaCert": true }), None).unwrap();
+
+        assert_eq!(args, vec!["--no-ca-cert"]);
+    }
+
+    #[test]
     fn common_global_args_include_use_system_ca() {
         let mut args = Vec::new();
 
         append_common_global_args(&mut args, &json!({ "useSystemCa": true }), None).unwrap();
 
         assert_eq!(args, vec!["--use-system-ca", "true"]);
+    }
+
+    #[test]
+    fn common_global_args_reject_ca_cert_with_clear() {
+        let mut args = Vec::new();
+        let error = append_common_global_args(
+            &mut args,
+            &json!({
+                "caCert": "/tmp/proxy-ca.pem",
+                "clearCaCert": true
+            }),
+            None,
+        )
+        .unwrap_err();
+
+        assert!(error.message.contains("Cannot use caCert with clearCaCert"));
+        assert!(args.is_empty());
     }
 
     #[test]

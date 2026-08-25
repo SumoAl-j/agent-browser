@@ -37,6 +37,7 @@ fn native_test_fixture_html(name: &str) -> &'static str {
         "drag_probe" => include_str!("test_fixtures/drag_probe.html"),
         "html5_drag_probe" => include_str!("test_fixtures/html5_drag_probe.html"),
         "pointer_capture_probe" => include_str!("test_fixtures/pointer_capture_probe.html"),
+        "snapshot_diff_probe" => include_str!("test_fixtures/snapshot_diff_probe.html"),
         "upload_probe" => include_str!("test_fixtures/upload_probe.html"),
         _ => panic!("Unknown native test fixture: {}", name),
     }
@@ -3364,7 +3365,11 @@ async fn e2e_diff_snapshot() {
     assert_success(&resp);
 
     let resp = execute_command(
-        &json!({ "id": "2", "action": "navigate", "url": "data:text/html,<h1>Hello</h1><p>World</p>" }),
+        &json!({
+            "id": "2",
+            "action": "navigate",
+            "url": native_test_fixture_url("snapshot_diff_probe")
+        }),
         &mut state,
     )
     .await;
@@ -3374,10 +3379,57 @@ async fn e2e_diff_snapshot() {
     let resp = execute_command(&json!({ "id": "3", "action": "snapshot" }), &mut state).await;
     assert_success(&resp);
     let baseline = get_data(&resp)["snapshot"].as_str().unwrap().to_string();
+    assert!(baseline.starts_with("- button \"Primary action\" [ref=e1]"));
+    let baseline_dir = tempfile::tempdir().unwrap();
+    let baseline_path = baseline_dir.path().join("baseline.txt");
+    std::fs::write(&baseline_path, format!("{}\n", baseline)).unwrap();
+
+    // A failed diff must preserve the refs from the last successful snapshot.
+    let resp = execute_command(
+        &json!({
+            "id": "4",
+            "action": "diff_snapshot",
+            "baseline": baseline_path,
+            "selector": "#missing"
+        }),
+        &mut state,
+    )
+    .await;
+    assert_eq!(resp["success"], false);
+    assert!(resp["error"]
+        .as_str()
+        .unwrap()
+        .contains("did not match any element"));
+
+    let resp = execute_command(
+        &json!({ "id": "5", "action": "click", "selector": "e1" }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+
+    // Repeated diffs must each begin a fresh ref-numbering epoch.
+    for id in ["6", "7"] {
+        let resp = execute_command(
+            &json!({ "id": id, "action": "diff_snapshot", "baseline": baseline_path }),
+            &mut state,
+        )
+        .await;
+        assert_success(&resp);
+        let data = get_data(&resp);
+        assert_eq!(data["changed"], false);
+        assert_eq!(data["additions"], 0);
+        assert_eq!(data["removals"], 0);
+        assert_eq!(data["diff"], "");
+    }
 
     // Modify the page
     let resp = execute_command(
-        &json!({ "id": "4", "action": "evaluate", "script": "document.querySelector('h1').textContent = 'Changed'" }),
+        &json!({
+            "id": "8",
+            "action": "evaluate",
+            "script": "document.querySelector('#primary-action').textContent = 'Updated action'"
+        }),
         &mut state,
     )
     .await;
@@ -3385,13 +3437,116 @@ async fn e2e_diff_snapshot() {
 
     // Diff against baseline
     let resp = execute_command(
-        &json!({ "id": "5", "action": "diff_snapshot", "baseline": baseline }),
+        &json!({ "id": "9", "action": "diff_snapshot", "baseline": baseline_path }),
         &mut state,
     )
     .await;
     assert_success(&resp);
     let data = get_data(&resp);
-    assert_eq!(data["changed"], true, "Diff should detect the h1 change");
+    assert_eq!(
+        data["changed"], true,
+        "Diff should detect the button change"
+    );
+    assert_eq!(data["additions"], 1);
+    assert_eq!(data["removals"], 1);
+    assert!(data["diff"].as_str().unwrap().contains("Updated action"));
+
+    let resp = execute_command(&json!({ "id": "99", "action": "close" }), &mut state).await;
+    assert_success(&resp);
+}
+
+#[tokio::test]
+#[ignore]
+async fn e2e_diff_url_aligns_refs_after_snapshot() {
+    let mut state = DaemonState::new();
+
+    let resp = execute_command(
+        &json!({ "id": "1", "action": "launch", "headless": true }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+
+    let stale_url = "data:text/html,<button id='stale-action'>Stale action</button>";
+    let url = native_test_fixture_url("snapshot_diff_probe");
+    let resp = execute_command(
+        &json!({ "id": "2", "action": "navigate", "url": stale_url }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+
+    // Populate refs that must be invalidated once the URL diff starts navigating.
+    let resp = execute_command(
+        &json!({
+            "id": "3",
+            "action": "snapshot",
+            "selector": "#stale-action"
+        }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+    assert!(state.ref_map.get("e1").is_some());
+
+    let resp = execute_command(
+        &json!({
+            "id": "4",
+            "action": "diff_url",
+            "url1": url,
+            "url2": "http://[invalid"
+        }),
+        &mut state,
+    )
+    .await;
+    assert_eq!(resp["success"], false);
+    assert!(state.ref_map.entries_sorted().is_empty());
+
+    let resp = execute_command(
+        &json!({
+            "id": "5",
+            "action": "evaluate",
+            "script": "document.querySelector('#primary-action')?.textContent"
+        }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+    assert_eq!(get_data(&resp)["result"], "Primary action");
+
+    let resp = execute_command(
+        &json!({ "id": "6", "action": "click", "selector": "e1" }),
+        &mut state,
+    )
+    .await;
+    assert_eq!(resp["success"], false);
+    assert!(resp["error"].as_str().unwrap().contains("Unknown ref: e1"));
+
+    // Populate the session ref map before comparing the same URL to itself.
+    let resp = execute_command(&json!({ "id": "7", "action": "snapshot" }), &mut state).await;
+    assert_success(&resp);
+
+    let resp = execute_command(
+        &json!({
+            "id": "8",
+            "action": "diff_url",
+            "url1": url,
+            "url2": url
+        }),
+        &mut state,
+    )
+    .await;
+    assert_success(&resp);
+    let data = get_data(&resp);
+    assert_eq!(data["diff"]["identical"], true);
+    assert_eq!(data["diff"]["changed"], false);
+    assert_eq!(data["diff"]["additions"], 0);
+    assert_eq!(data["diff"]["removals"], 0);
+    assert_eq!(data["snapshot1"], data["snapshot2"]);
+    assert!(data["snapshot1"]
+        .as_str()
+        .unwrap()
+        .starts_with("- button \"Primary action\" [ref=e1]"));
 
     let resp = execute_command(&json!({ "id": "99", "action": "close" }), &mut state).await;
     assert_success(&resp);

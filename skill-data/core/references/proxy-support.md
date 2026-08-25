@@ -182,7 +182,7 @@ export AGENT_BROWSER_CA_CERT=/etc/ssl/certs/proxy-ca.crt
 agent-browser open https://example.com
 ```
 
-On Linux, `--ca-cert` imports the certificate or PEM bundle into an isolated NSS database used only by that locally launched Chromium process. Certificate hostname, validity period, and unrelated authority verification stay enabled. Install `certutil` from `libnss3-tools` first.
+On Linux, `--ca-cert` imports the certificate or PEM bundle into an isolated NSS database used only by that locally launched Chromium process. Certificate hostname, validity period, and unrelated authority verification stay enabled. Later commands retain the CA when they omit the flag. Use `--no-ca-cert` to clear it. Different certificate content or an explicit clear relaunches Chromium without restarting the daemon, while the same content from any path reuses the browser. `agent-browser install --with-deps` installs the required `certutil`; otherwise install `libnss3-tools` on Debian/Ubuntu or `nss-tools` on RPM Linux.
 
 For a local Chromium launch, the option also adds the CA to the CLI's own TLS trust. Browser-side trust cannot be combined with `--profile`, Lightpanda, or `--ignore-https-errors`, and it is not available for local launches on macOS or Windows.
 

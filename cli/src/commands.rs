@@ -340,8 +340,21 @@ pub fn parse_command(args: &[String], flags: &Flags) -> Result<Value, ParseError
             }
         }
     }
+    attach_ca_cert_to_launch_command(&mut result, flags);
 
     Ok(result)
+}
+
+pub fn attach_ca_cert_to_launch_command(cmd: &mut Value, flags: &Flags) {
+    if cmd.get("action").and_then(Value::as_str) != Some("launch") {
+        return;
+    }
+    if let Some(ref ca) = flags.ca_cert {
+        cmd["caCert"] = json!(ca);
+    }
+    if flags.clear_ca_cert {
+        cmd["clearCaCert"] = json!(true);
+    }
 }
 
 fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseError> {
@@ -3183,6 +3196,7 @@ mod tests {
             provider: None,
             ignore_https_errors: false,
             ca_cert: None,
+            clear_ca_cert: false,
             use_system_ca: false,
             allow_file_access: false,
             hide_scrollbars: true,

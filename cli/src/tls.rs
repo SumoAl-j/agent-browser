@@ -127,11 +127,11 @@ fn add_webpki_roots(store: &mut RootCertStore) {
 /// uses too. One loader is the point: when this module had its own, the same
 /// `--ca-cert` file was valid for one consumer and invalid for the other.
 fn add_ca_bundle(store: &mut RootCertStore, path: &str) -> Result<usize, String> {
-    let certs = crate::ca_bundle::load(path)?;
+    let bundle = crate::ca_bundle::load(path)?;
     let mut added = 0;
-    for cert in certs {
+    for cert in bundle.certificates() {
         store
-            .add(cert)
+            .add(cert.clone())
             .map_err(|e| format!("Rejected CA certificate in '{path}': {e}"))?;
         added += 1;
     }
@@ -197,8 +197,8 @@ pub fn apply_to_reqwest(builder: reqwest::ClientBuilder) -> reqwest::ClientBuild
     // the bundle a third way here is how the accepted input domains drift.
     if let Some(path) = &opts.ca_cert {
         match crate::ca_bundle::load(path) {
-            Ok(certs) => {
-                for der in certs {
+            Ok(bundle) => {
+                for der in bundle.certificates() {
                     if let Ok(c) = reqwest::Certificate::from_der(der.as_ref()) {
                         builder = builder.add_root_certificate(c);
                     }

@@ -510,6 +510,7 @@ agent-browser skills                  # List available skills
 agent-browser skills list             # Same as above
 agent-browser skills get <name>       # Output a skill's full content
 agent-browser skills get <name> --full  # Include references and templates
+agent-browser skills get protected-vercel-deployments  # Access protected Vercel deployments
 agent-browser skills get --all        # Output every skill
 agent-browser skills path [name]      # Print skill directory path
 ```
@@ -955,7 +956,8 @@ This is useful for multimodal AI models that can reason about visual layout, unl
 | `--proxy <url>` | Proxy server URL with optional auth (or `AGENT_BROWSER_PROXY` env) |
 | `--proxy-bypass <hosts>` | Hosts to bypass proxy (or `AGENT_BROWSER_PROXY_BYPASS` env) |
 | `--ignore-https-errors` | Ignore HTTPS certificate errors (useful for self-signed certs) |
-| `--ca-cert <path>` | Add a CA certificate or PEM bundle to CLI TLS trust; also trust it in locally launched Chromium on Linux, which requires `certutil` and no `--profile` (or `AGENT_BROWSER_CA_CERT` env) |
+| `--ca-cert <path>` | Add a CA certificate or PEM bundle to CLI TLS trust; also trust it in locally launched Chromium on Linux, with browser trust retained for later commands (or `AGENT_BROWSER_CA_CERT` env) |
+| `--no-ca-cert` | Clear CA trust retained by the running browser session (or `AGENT_BROWSER_CLEAR_CA_CERT`) |
 | `--use-system-ca` | Verify the CLI's own connections against the OS trust store (or `AGENT_BROWSER_USE_SYSTEM_CA` env) |
 | `--allow-file-access` | Allow file:// URLs to access local files (Chromium only) |
 | `--hide-scrollbars <bool>` | Hide native scrollbars in headless Chromium screenshots, enabled by default (or `AGENT_BROWSER_HIDE_SCROLLBARS` env) |
@@ -1061,8 +1063,6 @@ Create an `agent-browser.json` file to set persistent defaults instead of repeat
   "userAgent": "my-agent/1.0",
   "hideScrollbars": false,
   "ignoreHttpsErrors": true,
-  "caCert": "/etc/ssl/certs/proxy-ca.crt",
-  "useSystemCa": false,
   "plugins": [
     {
       "name": "vault",
@@ -1072,6 +1072,18 @@ Create an `agent-browser.json` file to set persistent defaults instead of repeat
   ]
 }
 ```
+
+**Example proxy CA configuration:**
+
+```json
+{
+  "proxy": "http://localhost:8080",
+  "caCert": "/etc/ssl/certs/proxy-ca.crt",
+  "useSystemCa": false
+}
+```
+
+`caCert` configures CLI TLS trust. For local Chromium on Linux it also configures browser trust, which remains effective for later commands in the same running session. Use `"clearCaCert": true`, `--no-ca-cert`, or `AGENT_BROWSER_CLEAR_CA_CERT=1` to remove browser trust. Setting, changing, or clearing the CA relaunches Chromium without restarting the daemon. Repeating the same certificate content, including from a different path, reuses the current browser. On Linux, `agent-browser install --with-deps` installs the required `certutil`; otherwise install `libnss3-tools` on Debian/Ubuntu or `nss-tools` on RPM Linux. `useSystemCa` affects only CLI TLS.
 
 Use `--config <path>` or `AGENT_BROWSER_CONFIG` to load a specific config file instead of the defaults:
 
