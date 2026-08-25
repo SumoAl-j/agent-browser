@@ -6155,6 +6155,8 @@ async fn handle_diff_snapshot(cmd: &Value, state: &mut DaemonState) -> Result<Va
         selector,
         ..SnapshotOptions::default()
     };
+    // Start from the same ref base as a normal baseline snapshot so unchanged lines align.
+    state.ref_map.clear();
     let current = snapshot::take_snapshot(
         &mgr.client,
         &session_id,
@@ -6207,6 +6209,7 @@ async fn handle_diff_url(cmd: &Value, state: &mut DaemonState) -> Result<Value, 
     mgr.navigate(url1, wait_until).await?;
     let session_id = mgr.active_session_id()?.to_string();
     let options = SnapshotOptions::default();
+    state.ref_map.clear();
     let snap1 = snapshot::take_snapshot(
         &mgr.client,
         &session_id,
