@@ -61,10 +61,14 @@ function getBinaryName() {
       return null;
   }
 
-  // Windows ARM64 uses the published x64 binary through built-in emulation.
-  // Keep this consistent with scripts/postinstall.js's effectiveArch.
+  // Prefer a source-built native ARM64 executable when present. Otherwise,
+  // use the published x64 binary through Windows' built-in emulation, keeping
+  // the fallback consistent with scripts/postinstall.js's effectiveArch.
   if (osKey === 'win32' && archKey === 'arm64') {
-    archKey = 'x64';
+    const nativeBinaryName = `agent-browser-${osKey}-${archKey}.exe`;
+    if (!existsSync(join(__dirname, nativeBinaryName))) {
+      archKey = 'x64';
+    }
   }
 
   const ext = os === 'win32' ? '.exe' : '';
