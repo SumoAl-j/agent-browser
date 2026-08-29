@@ -65,7 +65,7 @@
     "@types/node": "24.x",
     "ai": "7.0.58",
     "eve": "^0.47.3",
-    "typescript": "7.0.2"
+    "typescript": "5.9.3"
   },
   "engines": {
     "node": ">=24.0.0"
