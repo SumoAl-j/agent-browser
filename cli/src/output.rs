@@ -3004,6 +3004,7 @@ Supported URL formats:
   - Port number: 9222 (connects to http://localhost:9222)
   - WebSocket URL: ws://localhost:9222/devtools/browser/...
   - Remote service: wss://remote-browser.example.com/cdp?token=...
+  - Root endpoint: wss://remote-browser.example.com?token=... (slash optional)
 
 Global Options:
   --json               Output as JSON
@@ -3737,7 +3738,7 @@ Options:
   --screenshot-format <fmt>  Screenshot format: png, jpeg (or AGENT_BROWSER_SCREENSHOT_FORMAT)
   --headed                   Show browser window (not headless) (or AGENT_BROWSER_HEADED env)
   --webgpu                   Enable WebGPU; uses SwiftShader software Vulkan on Linux, no GPU required (or AGENT_BROWSER_WEBGPU env)
-  --cdp <port>               Connect via CDP (Chrome DevTools Protocol)
+  --cdp <port|url>           Connect via CDP; root WebSocket query slash is optional
   --pin-tab                  Pin the session to its bound tab (or AGENT_BROWSER_PIN_TAB env)
                              Commands fail with a tab_gone error instead of falling back
                              to another tab when the bound tab is closed. JSON includes

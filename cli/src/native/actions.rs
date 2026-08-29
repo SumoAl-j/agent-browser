@@ -2452,7 +2452,8 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
                 let _ = close_current_browser(state).await;
             }
             if let Err(e) = auto_launch(state, plugins_from_command_or_env(cmd)).await {
-                return error_response(&id, &format!("Auto-launch failed: {}", e));
+                let context = auto_launch_error_context(env::var("AGENT_BROWSER_CDP").is_ok());
+                return error_response(&id, &format!("{}: {}", context, e));
             }
             lifecycle_launched = true;
         } else {
@@ -2799,6 +2800,14 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
     }
 
     resp
+}
+
+fn auto_launch_error_context(has_cdp: bool) -> &'static str {
+    if has_cdp {
+        "CDP connection failed"
+    } else {
+        "Auto-launch failed"
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -14722,6 +14731,28 @@ printf '%s' '{"protocol":"agent-browser.plugin.v1","success":true,"browser":{"cd
             "Unexpected error: {}",
             error_msg
         );
+    }
+
+    #[test]
+    fn test_auto_launch_error_context_distinguishes_cdp_connections() {
+        assert_eq!(auto_launch_error_context(true), "CDP connection failed");
+        assert_eq!(auto_launch_error_context(false), "Auto-launch failed");
+    }
+
+    #[tokio::test]
+    async fn test_execute_command_reports_cdp_connection_context() {
+        let guard = EnvGuard::new(&["AGENT_BROWSER_CDP"]);
+        guard.set("AGENT_BROWSER_CDP", "invalid-cdp-target");
+        let mut state = DaemonState::new();
+        let cmd = json!({ "action": "snapshot", "id": "cdp-error-context" });
+
+        let result = execute_command(&cmd, &mut state).await;
+
+        assert_eq!(result["success"], false);
+        assert!(result["error"]
+            .as_str()
+            .unwrap()
+            .starts_with("CDP connection failed: Invalid CDP target:"));
     }
 
     #[tokio::test]

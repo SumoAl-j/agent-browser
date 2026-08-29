@@ -440,7 +440,7 @@ EOF
 --headed                # show the window (default is headless)
 --webgpu                # enable WebGPU (software Vulkan on Linux, no GPU needed)
 --auto-connect          # connect to an already-running Chrome
---cdp <port>            # connect to a specific CDP port
+--cdp <port|url>        # connect to a CDP port or WebSocket URL; root query slash is optional
 --profile <name|path>   # use a Chrome profile (login state survives)
 --headers <json>        # HTTP headers scoped to the URL's origin
 --proxy <url>           # proxy server
