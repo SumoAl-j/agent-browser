@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { default as extension } from "../dist/index.js";
+import {
+  click, close, console, drag, evaluate, fill, find, get, hover, navigate,
+  network_requests, press_key, read, screenshot, scroll, select_option,
+  set_checked, snapshot, tabs, upload, wait_for,
+} from "../dist/tools/index.js";
 
 // Since eve 0.25, extension config is bound in a scope-keyed registry instead of
 // on the handle itself. The eve runtime sets this ambient scope global while it
@@ -8,8 +14,9 @@ import test from "node:test";
 // (`extension({ ... })`) bind config that the tools then read.
 globalThis[Symbol.for("eve.ext-config-scope")] = "@agent-browser/eve.test";
 
-const { default: extension } = await import("../dist/index.mjs");
-const tools = await import("../dist/tools/index.mjs");
+const tools = { click, close, console, drag, evaluate, fill, find, get, hover, navigate,
+  network_requests, press_key, read, screenshot, scroll, select_option,
+  set_checked, snapshot, tabs, upload, wait_for };
 
 const OK = (data) => JSON.stringify({ success: true, data, error: null });
 
