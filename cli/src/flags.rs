@@ -1166,6 +1166,8 @@ pub fn clean_args(args: &[String]) -> Vec<String> {
         "--idle-timeout",
         "--ca-cert",
         "--model",
+        // dashboard-specific flag; harmless on other commands (ignored)
+        "--allowed-origins",
     ];
 
     let mut i = 0;

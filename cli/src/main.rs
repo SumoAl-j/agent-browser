@@ -764,7 +764,10 @@ fn get_dashboard_pid_path() -> std::path::PathBuf {
     get_socket_dir().join("dashboard.pid")
 }
 
-fn run_dashboard_start(port: u16, json_mode: bool) {
+/// Start the dashboard and pass its explicit proxy-origin allowlist to the
+/// detached server process. This allowlist is deliberately separate from the
+/// request Host so DNS rebinding cannot grant an attacker-controlled origin.
+fn run_dashboard_start(port: u16, allowed_origins: Option<&str>, json_mode: bool) {
     let pid_path = get_dashboard_pid_path();
 
     // Check if already running
@@ -809,6 +812,9 @@ fn run_dashboard_start(port: u16, json_mode: bool) {
     let mut cmd = std::process::Command::new(&exe_path);
     cmd.env("AGENT_BROWSER_DASHBOARD", "1")
         .env("AGENT_BROWSER_DASHBOARD_PORT", port.to_string());
+    if let Some(allowed_origins) = allowed_origins {
+        cmd.env("AGENT_BROWSER_DASHBOARD_ALLOWED_ORIGINS", allowed_origins);
+    }
 
     #[cfg(unix)]
     {
@@ -1111,28 +1117,36 @@ fn main() {
 
     // Handle dashboard subcommand
     if clean.first().map(|s| s.as_str()) == Some("dashboard") {
-        match clean.get(1).map(|s| s.as_str()) {
-            Some("start") | None => {
-                let port = clean
-                    .iter()
-                    .position(|a| a == "--port")
-                    .and_then(|i| clean.get(i + 1))
-                    .and_then(|s| s.parse::<u16>().ok())
-                    .unwrap_or(4848);
-                run_dashboard_start(port, flags.json);
-                return;
-            }
+        let dashboard_args = &clean[1..];
+        match dashboard_args.first().map(|s| s.as_str()) {
             Some("stop") => {
                 run_dashboard_stop(flags.json);
                 return;
             }
-            Some(unknown) => {
+            Some(unknown) if !unknown.starts_with('-') => {
                 eprintln!(
                     "{} Unknown dashboard subcommand: {}",
                     color::error_indicator(),
                     unknown
                 );
                 exit(1);
+            }
+            _ => {
+                let port = clean
+                    .iter()
+                    .position(|a| a == "--port")
+                    .and_then(|i| clean.get(i + 1))
+                    .and_then(|s| s.parse::<u16>().ok())
+                    .unwrap_or(4848);
+                let cli_allowed_origins = args
+                    .iter()
+                    .position(|a| a == "--allowed-origins")
+                    .and_then(|i| args.get(i + 1))
+                    .map(String::as_str);
+                let env_allowed_origins = env::var("AGENT_BROWSER_DASHBOARD_ALLOWED_ORIGINS").ok();
+                let allowed_origins = cli_allowed_origins.or(env_allowed_origins.as_deref());
+                run_dashboard_start(port, allowed_origins, flags.json);
+                return;
             }
         }
     }
@@ -1953,6 +1967,18 @@ fn run_batch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dashboard_allowed_origins_flag_is_removed_from_command_args() {
+        let args = vec![
+            "dashboard".to_string(),
+            "start".to_string(),
+            "--allowed-origins".to_string(),
+            "https://dashboard.example.com".to_string(),
+        ];
+
+        assert_eq!(clean_args(&args), vec!["dashboard", "start"]);
+    }
 
     #[test]
     fn test_parse_proxy_simple() {

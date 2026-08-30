@@ -11,9 +11,13 @@ agent-browser dashboard start
 agent-browser open example.com
 ```
 
-Then open `http://localhost:4848` or a proxied/forwarded dashboard URL such as `https://dashboard.agent-browser.localhost` in your browser to see the live dashboard.
+Then open `http://localhost:4848` in your browser to see the live dashboard. If you expose the dashboard through a reverse proxy or port forward, explicitly allow its browser origin when starting the server:
 
-All sessions automatically stream to the dashboard. No extra flags are needed. The browser stays on the dashboard origin while the server proxies per-session tabs, status, and stream traffic internally, so session ports do not need to be exposed.
+```bash
+agent-browser dashboard start --allowed-origins https://dashboard.example.com
+```
+
+All sessions automatically stream to the dashboard. Local loopback origins are allowed automatically. For a reverse-proxied dashboard, use a comma-separated list of exact origins with `--allowed-origins` or `AGENT_BROWSER_DASHBOARD_ALLOWED_ORIGINS`; this lets the dashboard reject cross-origin requests and DNS-rebinding attacks. The browser stays on the dashboard origin while the server proxies per-session tabs, status, and stream traffic internally, so session ports do not need to be exposed.
 
 ### Custom stream port
 

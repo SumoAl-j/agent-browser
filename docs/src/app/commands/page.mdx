@@ -441,10 +441,11 @@ agent-browser --profile Default open https://gmail.com  # Reuse a profile's logi
 ```bash
 agent-browser dashboard [start]       # Start the dashboard server (default port: 4848)
 agent-browser dashboard start --port <n>  # Start on a specific port
+agent-browser dashboard start --allowed-origins <origins> # Allow exact reverse-proxied browser origins
 agent-browser dashboard stop          # Stop the dashboard server
 ```
 
-Open the dashboard through `http://localhost:4848` or a proxied/forwarded dashboard URL such as `https://dashboard.agent-browser.localhost`. The browser stays on the dashboard origin; per-session tabs, status, and stream traffic are proxied internally, so session ports do not need to be exposed.
+Loopback dashboard origins are accepted by default. For a reverse-proxied or forwarded URL, pass its exact browser origin with `--allowed-origins` or set `AGENT_BROWSER_DASHBOARD_ALLOWED_ORIGINS`. The browser stays on the dashboard origin; per-session tabs, status, and stream traffic are proxied internally, so session ports do not need to be exposed.
 
 ## Doctor
 
