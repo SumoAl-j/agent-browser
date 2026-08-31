@@ -61,13 +61,13 @@ agent-browser snapshot -i
 
 # Navigate to Activity tab to see all unreads in one view
 agent-browser snapshot -i
-agent-browser find role tab --name "Activity" click
+agent-browser find role tab click --name "Activity"
 agent-browser wait 1000
 agent-browser screenshot activity-unreads.png
 
 # Or check DMs tab
 agent-browser snapshot -i
-agent-browser find role tab --name "DMs" click
+agent-browser find role tab click --name "DMs"
 agent-browser screenshot dms.png
 
 # Or expand "More unreads" in sidebar
@@ -95,9 +95,9 @@ agent-browser screenshot channel.png
 ```bash
 # Use Slack search
 agent-browser snapshot -i
-agent-browser find role button --name "Search" click
+agent-browser find role button click --name "Search"
 agent-browser snapshot -i
-agent-browser find role searchbox --name "Search" fill "keyword"
+agent-browser find role searchbox fill "keyword" --name "Search"
 # Or if the search input has a placeholder:
 # agent-browser find placeholder "Search" fill "keyword"
 agent-browser press Enter
@@ -290,7 +290,7 @@ agent-browser snapshot -i > snapshot.txt
 
 # Check Activity tab for unreads
 agent-browser snapshot -i
-agent-browser find role tab --name "Activity" click
+agent-browser find role tab click --name "Activity"
 agent-browser wait 1000
 agent-browser screenshot activity.png
 ACTIVITY_RESULT=$(agent-browser snapshot -i | grep -A1 "Activity" | tail -1)
@@ -298,7 +298,7 @@ echo "Activity: $ACTIVITY_RESULT"
 
 # Check DMs
 agent-browser snapshot -i
-agent-browser find role tab --name "DMs" click
+agent-browser find role tab click --name "DMs"
 agent-browser wait 1000
 agent-browser screenshot dms.png
 
