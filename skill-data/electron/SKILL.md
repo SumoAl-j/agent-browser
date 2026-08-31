@@ -25,7 +25,7 @@ agent-browser connect 9222
 
 # Standard workflow from here
 agent-browser snapshot -i
-agent-browser find role button --name "New Message" click
+agent-browser find role button click --name "New Message"
 agent-browser screenshot slack-desktop.png
 ```
 
